@@ -1,0 +1,11 @@
+services:
+  chess-review:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Mount the ./games directory so any .pgn file placed there is accessible
+    # inside the container at /games/<filename>.
+    # Usage: place my-game.pgn in ./games, then run:
+    #   docker compose run --rm chess-review /games/my-game.pgn
+    volumes:
+      - ./games:/games:ro
