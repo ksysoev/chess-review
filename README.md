@@ -144,4 +144,4 @@ make fields  # fix struct field alignment
 
 ## License
 
-[MIT](LICENSE)
+[GPL 2.0](LICENSE)
