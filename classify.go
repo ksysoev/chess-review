@@ -42,16 +42,22 @@ func (c Classification) String() string {
 	}
 }
 
+// mateScoreSentinel is the centipawn value used to represent a forced mate.
+// Positive means the side to move has a forced mate; negative means they are
+// being mated. The magnitude is chosen to be far outside any real centipawn
+// range while still leaving room for delta arithmetic without overflow.
+// It is also used by normalizeScore in review.go.
+const mateScoreSentinel = 30_000
+
 const (
 	excellentThreshold  = 10
 	goodThreshold       = 25
 	inaccuracyThreshold = 100
 	mistakeThreshold    = 300
 	// missThreshold is the centipawn loss at which a move is classified as Miss.
-	// It is set just below mateScoreSentinel so that moves that throw away a
-	// forced mate (mapped to ±30000 by normalizeScore) are caught here rather
-	// than falling through to Blunder.
-	missThreshold = 20_000
+	// Derived from mateScoreSentinel (2/3 of the sentinel = 20 000) so that the
+	// two values stay in sync automatically if the sentinel ever changes.
+	missThreshold = mateScoreSentinel * 2 / 3
 )
 
 // Classify returns the move classification given the centipawn loss and whether

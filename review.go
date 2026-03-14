@@ -162,12 +162,6 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 	return reviews, nil
 }
 
-// mateScoreSentinel is the centipawn value used to represent a forced mate.
-// Positive means the side to move has a forced mate; negative means they are
-// being mated. The magnitude is chosen to be far outside any real centipawn
-// range while still leaving room for delta arithmetic without overflow.
-const mateScoreSentinel = 30_000
-
 // analyzePosition sets the engine position to the given sequence of UCI moves
 // starting from initialFEN, runs a depth-limited search, and returns the
 // centipawn score and best move.
