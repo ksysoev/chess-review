@@ -19,10 +19,15 @@ type chessEngine interface {
 
 // MoveReview holds the analysis result for a single half-move (ply).
 type MoveReview struct {
-	// MateIn is non-nil when the position before this move has a forced-mate sequence.
-	// Positive value means the side to move can force checkmate in that many moves.
-	// Negative value means the side to move is being mated in that many moves.
-	MateIn *int
+	// MateInBefore is non-nil when the position before this move has a forced-mate
+	// sequence. Positive means the side to move can force checkmate in that many
+	// moves; negative means they are being mated in that many moves.
+	MateInBefore *int
+	// MateInAfter is non-nil when the position after this move has a forced-mate
+	// sequence, expressed from the perspective of the side that just moved.
+	// Positive means the side that just moved can still force checkmate in that many
+	// moves; negative means the opponent now has the forced mate in that many moves.
+	MateInAfter *int
 	// PlayedMove is the move that was actually played, in UCI notation (e.g. "e2e4").
 	PlayedMove string
 	// BestMove is the engine's top-recommended move at the given depth.
@@ -145,6 +150,15 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		scoreAfterFromPlayedSide := -nextScore
 		delta := scoreAfterFromPlayedSide - scoreBefore
 
+		// Flip nextMateIn into the played side's frame: if the opponent now has
+		// mate-in-N (positive from their POV), that is -N from the played side.
+		var mateInAfter *int
+
+		if nextMateIn != nil {
+			v := -*nextMateIn
+			mateInAfter = &v
+		}
+
 		reviews = append(reviews, MoveReview{
 			PlayedMove:     mv.UCIMove,
 			BestMove:       thisBestMove,
@@ -154,7 +168,8 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
 			Classification: Classify(delta, mv.UCIMove, thisBestMove),
-			MateIn:         mateInBefore,
+			MateInBefore:   mateInBefore,
+			MateInAfter:    mateInAfter,
 		})
 
 		// Carry forward: the opponent's next "before" score is -nextScore from

@@ -109,19 +109,20 @@ func formatMateIn(mateIn *int) string {
 func printTable(reviews []chessreview.MoveReview) {
 	w := tabwriter.NewWriter(os.Stdout, tabWriterMinWidth, tabWriterTabWidth, tabWriterPadding, ' ', 0)
 
-	fmt.Fprintln(w, "Move\tColor\tPlayed\tBest\tClassification\tMate\tScore Before\tScore After\tDelta")
-	fmt.Fprintln(w, "----\t-----\t------\t----\t--------------\t----\t------------\t-----------\t-----")
+	fmt.Fprintln(w, "Move\tColor\tPlayed\tBest\tClassification\tMate Before\tMate After\tScore Before\tScore After\tDelta")
+	fmt.Fprintln(w, "----\t-----\t------\t----\t--------------\t-----------\t----------\t------------\t-----------\t-----")
 
 	for _, r := range reviews {
 		fmt.Fprintf(
 			w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%+d\n",
+			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%+d\n",
 			r.MoveNumber,
 			r.Color,
 			r.PlayedMove,
 			r.BestMove,
 			r.Classification,
-			formatMateIn(r.MateIn),
+			formatMateIn(r.MateInBefore),
+			formatMateIn(r.MateInAfter),
 			r.ScoreBefore,
 			r.ScoreAfter,
 			r.ScoreDelta,
