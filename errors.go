@@ -1,6 +1,6 @@
 // Package chessreview provides chess game analysis powered by the Stockfish engine.
 // It accepts a PGN game string, evaluates each position, and returns a per-move
-// review similar to chess.com's game review feature.
+// review with quality classifications for each move.
 //
 // Each move is classified into one of seven categories: Best, Excellent, Good,
 // Inaccuracy, Mistake, Blunder, or Miss (missed forced mate).

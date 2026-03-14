@@ -15,6 +15,9 @@ type moveInfo struct {
 	Color string
 	// MoveNumber is the full-move number (1-indexed; increments after Black's move).
 	MoveNumber int
+	// IsSacrifice is true when the move gives up material that the opponent can
+	// immediately recapture, making it a candidate for a Brilliant annotation.
+	IsSacrifice bool
 }
 
 // gameInfo holds the parsed moves and the initial position FEN for the game.
@@ -76,9 +79,10 @@ func parsePGN(pgn string) (gameInfo, error) {
 		moveNumber := startMoveNum + (i+startBlack)/2
 
 		infos = append(infos, moveInfo{
-			UCIMove:    moveToUCI(move),
-			Color:      color,
-			MoveNumber: moveNumber,
+			UCIMove:     moveToUCI(move),
+			Color:       color,
+			MoveNumber:  moveNumber,
+			IsSacrifice: detectSacrifice(positions[i], positions[i+1], move),
 		})
 	}
 

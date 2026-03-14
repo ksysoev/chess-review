@@ -18,6 +18,10 @@ const (
 	Blunder
 	// Miss indicates a move that misses an immediate winning tactic (e.g. missed mate).
 	Miss
+	// Brilliant indicates a material sacrifice that leads to an excellent or better
+	// position, provided the position was not already overwhelmingly winning before
+	// the move. Corresponds to the "!!" annotation in standard chess notation.
+	Brilliant
 )
 
 // String returns a human-readable label for the classification.
@@ -37,6 +41,8 @@ func (c Classification) String() string {
 		return "Blunder"
 	case Miss:
 		return "Miss"
+	case Brilliant:
+		return "Brilliant"
 	default:
 		return "Unknown"
 	}
@@ -58,32 +64,51 @@ const (
 	// Derived from mateScoreSentinel (2/3 of the sentinel = 20 000) so that the
 	// two values stay in sync automatically if the sentinel ever changes.
 	missThreshold = mateScoreSentinel * 2 / 3
+	// brilliantWinningThreshold is the pre-move evaluation above which a sacrifice
+	// is not annotated as Brilliant. When the position is already overwhelmingly
+	// winning (≥ +9.00, queen-equivalent advantage) a sacrifice is merely
+	// technique rather than a spectacular find.
+	brilliantWinningThreshold = 900
 )
 
-// Classify returns the move classification given the centipawn loss and whether
-// the played move equals the engine's best move.
+// Classify returns the move classification given the centipawn delta, the
+// pre-move evaluation, and contextual flags.
 //
 // scoreDelta is the change in centipawns from the perspective of the side that
 // just moved: positive means the position improved for that side, negative means
 // the played move cost material/position. We work with the absolute loss value.
 //
-// Thresholds mirror chess.com's game review grading:
+// scoreBefore is the centipawn evaluation immediately before the move, from the
+// perspective of the side to move. It is used to suppress Brilliant annotations
+// when the position was already overwhelmingly winning (≥ +9.00 / 900 cp).
 //
-//	Best       – played move equals engine best
+// isSacrifice reports whether the move gives up material that the opponent can
+// immediately recapture, making it a candidate for a Brilliant annotation.
+//
+// Thresholds used for move classification grading:
+//
+//	Brilliant  – sacrifice with ≤10 cp loss when not already clearly winning
+//	Best       – played move equals engine best (and not a qualifying sacrifice)
 //	Excellent  – 0–10 cp loss
 //	Good       – 11–25 cp loss
 //	Inaccuracy – 26–100 cp loss
 //	Mistake    – 101–300 cp loss
 //	Blunder    – > 300 cp loss
 //	Miss       – move throws away a forced mate (sentinel loss ≥ 20000 cp)
-func Classify(scoreDelta int, playedMove, bestMove string) Classification {
-	if playedMove == bestMove {
-		return Best
-	}
-
+func Classify(scoreDelta, scoreBefore int, playedMove, bestMove string, isSacrifice bool) Classification {
 	loss := -scoreDelta
 	if loss < 0 {
 		loss = 0
+	}
+
+	// Brilliant: a sacrifice that keeps the evaluation in excellent range, but
+	// only when the position was not already overwhelmingly winning beforehand.
+	if isSacrifice && loss <= excellentThreshold && scoreBefore < brilliantWinningThreshold {
+		return Brilliant
+	}
+
+	if playedMove == bestMove {
+		return Best
 	}
 
 	switch {

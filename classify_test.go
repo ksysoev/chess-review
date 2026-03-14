@@ -10,11 +10,13 @@ func TestClassify(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		playedMove string
-		bestMove   string
-		scoreDelta int
-		expected   Classification
+		name        string
+		playedMove  string
+		bestMove    string
+		scoreDelta  int
+		scoreBefore int
+		isSacrifice bool
+		expected    Classification
 	}{
 		{
 			name:       "best move returns Best",
@@ -100,13 +102,95 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Excellent,
 		},
+		// --- Brilliant move cases ---
+		{
+			name:        "sacrifice with zero loss and non-winning position returns Brilliant",
+			scoreDelta:  0,
+			scoreBefore: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Brilliant,
+		},
+		{
+			name:        "sacrifice with 10 cp loss (boundary) returns Brilliant",
+			scoreDelta:  -10,
+			scoreBefore: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Brilliant,
+		},
+		{
+			name:        "sacrifice that is also engine best returns Brilliant not Best",
+			scoreDelta:  0,
+			scoreBefore: 100,
+			playedMove:  "e2e4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Brilliant,
+		},
+		{
+			name:        "sacrifice with 11 cp loss falls through to Good (not Brilliant)",
+			scoreDelta:  -11,
+			scoreBefore: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Good,
+		},
+		{
+			name:        "sacrifice allowed when position winning but below queen value (300 cp)",
+			scoreDelta:  -5,
+			scoreBefore: 300,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Brilliant,
+		},
+		{
+			name:        "sacrifice allowed when position winning but below queen value (500 cp)",
+			scoreDelta:  0,
+			scoreBefore: 500,
+			playedMove:  "e2e4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Brilliant,
+		},
+		{
+			name:        "sacrifice suppressed when position overwhelmingly winning (>=900 cp)",
+			scoreDelta:  0,
+			scoreBefore: 900,
+			playedMove:  "e2e4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Best,
+		},
+		{
+			name:        "sacrifice suppressed when position overwhelmingly winning (>900 cp)",
+			scoreDelta:  -5,
+			scoreBefore: 1200,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Excellent,
+		},
+		{
+			name:        "non-sacrifice with excellent loss returns Excellent not Brilliant",
+			scoreDelta:  -5,
+			scoreBefore: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: false,
+			expected:    Excellent,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := Classify(tc.scoreDelta, tc.playedMove, tc.bestMove)
+			result := Classify(tc.scoreDelta, tc.scoreBefore, tc.playedMove, tc.bestMove, tc.isSacrifice)
 
 			assert.Equal(t, tc.expected, result)
 		})
@@ -127,6 +211,8 @@ func TestClassificationString(t *testing.T) {
 		{expected: "Mistake", classification: Mistake},
 		{expected: "Blunder", classification: Blunder},
 		{expected: "Miss", classification: Miss},
+		{expected: "Brilliant", classification: Brilliant},
+		{expected: "Unknown", classification: Classification(99)},
 	}
 
 	for _, tc := range tests {

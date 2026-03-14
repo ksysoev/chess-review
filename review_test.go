@@ -472,6 +472,59 @@ func TestReviewer_ReviewGame_MateInAfter(t *testing.T) {
 	assert.Nil(t, reviews[1].MateInAfter)
 }
 
+func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
+	t.Parallel()
+
+	// Evans Gambit: 4. b4 is a classic pawn sacrifice — after the move Black's
+	// bishop on c5 can capture on b4, so IsSacrifice is true. With an excellent
+	// engine score (−5 cp) and a pre-move evaluation well below the "already
+	// winning" threshold (50 cp < 300 cp), the move qualifies as Brilliant.
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. b4 *`
+
+	// 7 half-moves → 8 analyzePosition calls (N+1).
+	//   call 0 (initial):   score= 20, best=e2e4
+	//   call 1 (after e4):  score= 30, best=e7e5
+	//   call 2 (after e5):  score= 10, best=g1f3
+	//   call 3 (after Nf3): score= 20, best=b8c6
+	//   call 4 (after Nc6): score= 15, best=f1c4
+	//   call 5 (after Bc4): score= 25, best=f8c5
+	//   call 6 (after Bc5): score= 50, best=b2b4  ← White to move; b4 is engine best
+	//   call 7 (after b4):  score=-45, best=c5b4  ← Black to move; delta = 45−50 = −5
+	//
+	// For White's b4: scoreBefore=50, scoreAfterFromPlayedSide=45, delta=−5.
+	// isSacrifice=true (Black's bishop can capture), loss=5 ≤ 10, scoreBefore=50 < 300
+	// → Brilliant.
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("g1f3"),
+			makeDepthInfo(20), makeBestMoveInfo("b8c6"),
+			makeDepthInfo(15), makeBestMoveInfo("f1c4"),
+			makeDepthInfo(25), makeBestMoveInfo("f8c5"),
+			makeDepthInfo(50), makeBestMoveInfo("b2b4"),
+			makeDepthInfo(-45), makeBestMoveInfo("c5b4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 7)
+
+	b4 := reviews[6] // White's b4 is the seventh half-move (index 6).
+
+	assert.Equal(t, "b2b4", b4.PlayedMove)
+	assert.Equal(t, "white", b4.Color)
+	assert.True(t, b4.IsSacrifice)
+	assert.Equal(t, Brilliant, b4.Classification)
+}
+
 func TestNormalizeScore(t *testing.T) {
 	t.Parallel()
 

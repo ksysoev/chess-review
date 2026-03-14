@@ -36,6 +36,10 @@ type MoveReview struct {
 	Color string
 	// Classification is the quality rating of the played move.
 	Classification Classification
+	// IsSacrifice is true when the move was detected as a material sacrifice:
+	// the moved piece's value exceeds what was captured, and the opponent had
+	// at least one legal recapture on the destination square.
+	IsSacrifice bool
 	// ScoreBefore is the centipawn evaluation before the move, from the perspective
 	// of the side to move.
 	ScoreBefore int
@@ -167,7 +171,8 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 			ScoreBefore:    scoreBefore,
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
-			Classification: Classify(delta, mv.UCIMove, thisBestMove),
+			Classification: Classify(delta, scoreBefore, mv.UCIMove, thisBestMove, mv.IsSacrifice),
+			IsSacrifice:    mv.IsSacrifice,
 			MateInBefore:   mateInBefore,
 			MateInAfter:    mateInAfter,
 		})
