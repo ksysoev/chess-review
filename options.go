@@ -1,0 +1,71 @@
+package chessreview
+
+import "fmt"
+
+const (
+	defaultDepth   = 18
+	defaultThreads = 1
+	defaultHashMB  = 16
+)
+
+// config holds internal configuration for a Reviewer.
+type config struct {
+	depth   int
+	threads int
+	hashMB  int
+}
+
+// Option is a functional option for configuring a Reviewer.
+type Option func(*config)
+
+// WithDepth sets the search depth for engine analysis.
+// Higher values produce stronger but slower analysis.
+// The default depth is 18.
+func WithDepth(depth int) Option {
+	return func(c *config) {
+		c.depth = depth
+	}
+}
+
+// WithThreads sets the number of CPU threads the engine may use.
+// The default is 1.
+func WithThreads(threads int) Option {
+	return func(c *config) {
+		c.threads = threads
+	}
+}
+
+// WithHash sets the transposition table size in megabytes.
+// Larger values can improve analysis quality at the cost of memory.
+// The default is 16 MB.
+func WithHash(mb int) Option {
+	return func(c *config) {
+		c.hashMB = mb
+	}
+}
+
+func defaultConfig() config {
+	return config{
+		depth:   defaultDepth,
+		threads: defaultThreads,
+		hashMB:  defaultHashMB,
+	}
+}
+
+// validate checks that all config fields have sensible values.
+// Returns an error if any value is out of the acceptable range.
+func (c *config) validate() error {
+	if c.depth < 1 {
+		return fmt.Errorf("invalid depth %d: must be >= 1", c.depth)
+	}
+
+	if c.threads < 1 {
+		return fmt.Errorf("invalid threads %d: must be >= 1", c.threads)
+	}
+
+	if c.hashMB < 1 {
+		return fmt.Errorf("invalid hash size %d MB: must be >= 1", c.hashMB)
+	}
+
+	return nil
+}
