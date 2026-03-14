@@ -108,7 +108,7 @@ Shuts down the underlying Stockfish process.
 | `MoveNumber`     | `int`            | Full-move number (1-indexed)                             |
 | `Classification` | `Classification` | Quality rating of the played move                        |
 | `ScoreBefore`    | `int`            | Centipawn score before the move (side-to-move frame)     |
-| `ScoreAfter`     | `int`            | Centipawn score after the move (side-to-move frame)      |
+| `ScoreAfter`     | `int`            | Centipawn score after the move, from the perspective of the side that just moved (negated from the engine's output so both `ScoreBefore` and `ScoreAfter` share the same reference frame) |
 | `ScoreDelta`     | `int`            | `ScoreAfter − ScoreBefore`; negative means loss          |
 
 ### Move classifications

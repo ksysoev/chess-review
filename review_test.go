@@ -280,10 +280,14 @@ func TestNew_InvalidOptions(t *testing.T) {
 			t.Parallel()
 
 			// New() validates options before attempting to start the engine,
-			// so it must return an error even with a nonexistent path.
+			// so it must return an ErrEngineFailure even with a nonexistent path.
 			_, err := New("/nonexistent/stockfish", tc.opt)
 
 			require.Error(t, err)
+
+			var engErr *ErrEngineFailure
+
+			assert.ErrorAs(t, err, &engErr)
 			assert.Contains(t, err.Error(), tc.errMsg)
 		})
 	}

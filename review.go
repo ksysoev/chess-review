@@ -59,7 +59,7 @@ func New(stockfishPath string, opts ...Option) (*Reviewer, error) {
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, err
+		return nil, &ErrEngineFailure{Cause: err, Reason: err.Error()}
 	}
 
 	client, err := stockfish.New(stockfishPath)
@@ -95,6 +95,10 @@ func (r *Reviewer) Close() error {
 // (N+1 total calls for N plies) and carries the score forward between plies to
 // avoid redundant engine work.
 //
+// PGN games with a custom starting position (SetUp/FEN headers) are fully
+// supported: Stockfish is initialised from the FEN rather than the standard
+// starting position, and move numbers reflect the FEN's full-move counter.
+//
 // Returns ErrInvalidPGN when the PGN cannot be parsed.
 // Returns ErrEngineFailure when communication with the engine fails.
 func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, error) {
@@ -102,7 +106,7 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		return nil, &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
 	}
 
-	moves, err := parsePGN(pgn)
+	gi, err := parsePGN(pgn)
 	if err != nil {
 		return nil, err
 	}
@@ -111,22 +115,22 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
 
-	reviews := make([]MoveReview, 0, len(moves))
-	playedSoFar := make([]string, 0, len(moves))
+	reviews := make([]MoveReview, 0, len(gi.Moves))
+	playedSoFar := make([]string, 0, len(gi.Moves))
 
 	// Evaluate the initial position once before the loop.
-	currentScore, bestMove, analyzeErr := r.analyzePosition(ctx, playedSoFar)
+	currentScore, bestMove, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 	if analyzeErr != nil {
 		return nil, analyzeErr
 	}
 
-	for _, mv := range moves {
+	for _, mv := range gi.Moves {
 		scoreBefore := currentScore
 		thisBestMove := bestMove
 
 		playedSoFar = append(playedSoFar, mv.UCIMove)
 
-		nextScore, nextBestMove, analyzeErr := r.analyzePosition(ctx, playedSoFar)
+		nextScore, nextBestMove, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 		if analyzeErr != nil {
 			return nil, analyzeErr
 		}
@@ -165,14 +169,18 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 const mateScoreSentinel = 30_000
 
 // analyzePosition sets the engine position to the given sequence of UCI moves
-// starting from the initial position, runs a depth-limited search, and returns
-// the centipawn score and best move.
+// starting from initialFEN, runs a depth-limited search, and returns the
+// centipawn score and best move.
+//
+// initialFEN must be a valid FEN string (typically the first position of the
+// parsed game). Using the game's actual starting FEN rather than always
+// stockfish.StartPosition ensures correctness for PGNs with SetUp/FEN headers.
 //
 // Mate scores reported by the engine are mapped to ±mateScoreSentinel so that
 // downstream centipawn arithmetic remains meaningful. Returns ErrEngineFailure
 // if the engine stream closes without ever producing a best move.
-func (r *Reviewer) analyzePosition(ctx context.Context, moves []string) (score int, bestMove string, err error) {
-	pos := stockfish.StartPosition()
+func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves []string) (score int, bestMove string, err error) {
+	pos := stockfish.FENPosition(initialFEN)
 	if len(moves) > 0 {
 		pos = pos.WithMoves(moves...)
 	}

@@ -30,39 +30,39 @@ const twoMoveGame = `[Event "Test"]
 func TestParsePGN_ValidGame(t *testing.T) {
 	t.Parallel()
 
-	moves, err := parsePGN(scholarsMate)
+	gi, err := parsePGN(scholarsMate)
 
 	require.NoError(t, err)
-	assert.Len(t, moves, 7)
+	assert.Len(t, gi.Moves, 7)
 
 	// First move: e2e4 by White, move number 1
-	assert.Equal(t, "e2e4", moves[0].UCIMove)
-	assert.Equal(t, "white", moves[0].Color)
-	assert.Equal(t, 1, moves[0].MoveNumber)
+	assert.Equal(t, "e2e4", gi.Moves[0].UCIMove)
+	assert.Equal(t, "white", gi.Moves[0].Color)
+	assert.Equal(t, 1, gi.Moves[0].MoveNumber)
 
 	// Second move: e7e5 by Black, move number 1
-	assert.Equal(t, "e7e5", moves[1].UCIMove)
-	assert.Equal(t, "black", moves[1].Color)
-	assert.Equal(t, 1, moves[1].MoveNumber)
+	assert.Equal(t, "e7e5", gi.Moves[1].UCIMove)
+	assert.Equal(t, "black", gi.Moves[1].Color)
+	assert.Equal(t, 1, gi.Moves[1].MoveNumber)
 
 	// Third move: Qh5 (d1h5) by White, move number 2
-	assert.Equal(t, "white", moves[2].Color)
-	assert.Equal(t, 2, moves[2].MoveNumber)
+	assert.Equal(t, "white", gi.Moves[2].Color)
+	assert.Equal(t, 2, gi.Moves[2].MoveNumber)
 }
 
 func TestParsePGN_TwoMoves(t *testing.T) {
 	t.Parallel()
 
-	moves, err := parsePGN(twoMoveGame)
+	gi, err := parsePGN(twoMoveGame)
 
 	require.NoError(t, err)
-	assert.Len(t, moves, 2)
+	assert.Len(t, gi.Moves, 2)
 
-	assert.Equal(t, "e2e4", moves[0].UCIMove)
-	assert.Equal(t, "white", moves[0].Color)
+	assert.Equal(t, "e2e4", gi.Moves[0].UCIMove)
+	assert.Equal(t, "white", gi.Moves[0].Color)
 
-	assert.Equal(t, "e7e5", moves[1].UCIMove)
-	assert.Equal(t, "black", moves[1].Color)
+	assert.Equal(t, "e7e5", gi.Moves[1].UCIMove)
+	assert.Equal(t, "black", gi.Moves[1].Color)
 }
 
 func TestParsePGN_InvalidPGN(t *testing.T) {
@@ -135,28 +135,113 @@ const castlingPGN = `[Event "Test"]
 func TestMoveToUCI_Promotion(t *testing.T) {
 	t.Parallel()
 
-	moves, err := parsePGN(promotionPGN)
+	gi, err := parsePGN(promotionPGN)
 
 	require.NoError(t, err)
-	require.Len(t, moves, 1)
+	require.Len(t, gi.Moves, 1)
 
 	// e7→e8 with queen promotion must produce "e7e8q"
-	assert.Equal(t, "e7e8q", moves[0].UCIMove)
-	assert.Equal(t, "white", moves[0].Color)
-	assert.Equal(t, 1, moves[0].MoveNumber)
+	assert.Equal(t, "e7e8q", gi.Moves[0].UCIMove)
+	assert.Equal(t, "white", gi.Moves[0].Color)
+	assert.Equal(t, 1, gi.Moves[0].MoveNumber)
 }
 
 func TestMoveToUCI_Castling(t *testing.T) {
 	t.Parallel()
 
-	moves, err := parsePGN(castlingPGN)
+	gi, err := parsePGN(castlingPGN)
 
 	require.NoError(t, err)
 	// 7 half-moves: e4, e5, Nf3, Nc6, Bc4, Bc5, O-O
-	require.Len(t, moves, 7)
+	require.Len(t, gi.Moves, 7)
 
 	// O-O (kingside castling) must be represented as e1g1 in UCI
-	assert.Equal(t, "e1g1", moves[6].UCIMove)
-	assert.Equal(t, "white", moves[6].Color)
-	assert.Equal(t, 4, moves[6].MoveNumber)
+	assert.Equal(t, "e1g1", gi.Moves[6].UCIMove)
+	assert.Equal(t, "white", gi.Moves[6].Color)
+	assert.Equal(t, 4, gi.Moves[6].MoveNumber)
+}
+
+// fenMoveNumberPGN is a game starting from move 5 with White to move.
+// The FEN full-move counter is 5, so the first move should be numbered 5.
+const fenMoveNumberPGN = `[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 5"]
+
+5. e4 e5 *`
+
+// fenBlackFirstPGN starts with Black to move at full-move 3.
+// The first ply is Black's, so its MoveNumber must be 3, and White's
+// subsequent move must be 4.
+const fenBlackFirstPGN = `[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+[SetUp "1"]
+[FEN "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 3"]
+
+3... e5 4. Nf3 *`
+
+func TestParsePGN_FENMoveNumber(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(fenMoveNumberPGN)
+
+	require.NoError(t, err)
+	require.Len(t, gi.Moves, 2)
+
+	// White's e4 at full-move 5
+	assert.Equal(t, "e2e4", gi.Moves[0].UCIMove)
+	assert.Equal(t, "white", gi.Moves[0].Color)
+	assert.Equal(t, 5, gi.Moves[0].MoveNumber)
+
+	// Black's e5 at full-move 5
+	assert.Equal(t, "e7e5", gi.Moves[1].UCIMove)
+	assert.Equal(t, "black", gi.Moves[1].Color)
+	assert.Equal(t, 5, gi.Moves[1].MoveNumber)
+}
+
+func TestParsePGN_FENBlackFirst(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(fenBlackFirstPGN)
+
+	require.NoError(t, err)
+	require.Len(t, gi.Moves, 2)
+
+	// Black's e5 at full-move 3
+	assert.Equal(t, "e7e5", gi.Moves[0].UCIMove)
+	assert.Equal(t, "black", gi.Moves[0].Color)
+	assert.Equal(t, 3, gi.Moves[0].MoveNumber)
+
+	// White's Nf3 at full-move 4
+	assert.Equal(t, "g1f3", gi.Moves[1].UCIMove)
+	assert.Equal(t, "white", gi.Moves[1].Color)
+	assert.Equal(t, 4, gi.Moves[1].MoveNumber)
+}
+
+func TestParsePGN_FENInitialFEN(t *testing.T) {
+	t.Parallel()
+
+	// Standard game should use the standard starting FEN.
+	gi, err := parsePGN(twoMoveGame)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, gi.InitialFEN)
+	// The standard starting FEN ends with "0 1" (halfmove clock 0, fullmove 1).
+	assert.Contains(t, gi.InitialFEN, " 0 1")
+
+	// FEN game should preserve the custom starting FEN.
+	giFEN, err := parsePGN(fenMoveNumberPGN)
+
+	require.NoError(t, err)
+	assert.Contains(t, giFEN.InitialFEN, " 0 5")
 }

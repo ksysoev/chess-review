@@ -1,6 +1,7 @@
 package chessreview
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/notnil/chess"
@@ -16,20 +17,30 @@ type moveInfo struct {
 	MoveNumber int
 }
 
-// parsePGN parses a PGN string and returns an ordered slice of moveInfo for each
-// half-move (ply) in the game.
+// gameInfo holds the parsed moves and the initial position FEN for the game.
+type gameInfo struct {
+	// InitialFEN is the Forsyth-Edwards Notation of the starting position.
+	// For standard games this is the default starting FEN; for SetUp/FEN games
+	// it reflects the custom starting position from the PGN header.
+	InitialFEN string
+	// Moves is the ordered list of half-moves extracted from the game.
+	Moves []moveInfo
+}
+
+// parsePGN parses a PGN string and returns a gameInfo containing the initial
+// position FEN and an ordered slice of moveInfo for each half-move (ply).
 //
 // It returns ErrInvalidPGN when the PGN cannot be parsed or contains no moves.
-func parsePGN(pgn string) ([]moveInfo, error) {
+func parsePGN(pgn string) (gameInfo, error) {
 	reader := strings.NewReader(pgn)
 
 	games, err := chess.GamesFromPGN(reader)
 	if err != nil {
-		return nil, &ErrInvalidPGN{Cause: err, Reason: err.Error()}
+		return gameInfo{}, &ErrInvalidPGN{Cause: err, Reason: err.Error()}
 	}
 
 	if len(games) == 0 {
-		return nil, &ErrInvalidPGN{Reason: "no games found in PGN"}
+		return gameInfo{}, &ErrInvalidPGN{Reason: "no games found in PGN"}
 	}
 
 	game := games[0]
@@ -37,8 +48,16 @@ func parsePGN(pgn string) ([]moveInfo, error) {
 	moves := game.Moves()
 
 	if len(moves) == 0 {
-		return nil, &ErrInvalidPGN{Reason: "game contains no moves"}
+		return gameInfo{}, &ErrInvalidPGN{Reason: "game contains no moves"}
 	}
+
+	// positions[0] is always the initial position. Its String() method returns
+	// the full FEN, which includes the full-move number (field 6) and the
+	// side to move (field 2).
+	initialPos := positions[0]
+	initialFEN := initialPos.String()
+
+	startMoveNum, startBlack := parseFENMoveContext(initialFEN)
 
 	infos := make([]moveInfo, 0, len(moves))
 
@@ -50,8 +69,11 @@ func parsePGN(pgn string) ([]moveInfo, error) {
 			color = "black"
 		}
 
-		// Full-move number: increments after Black plays.
-		moveNumber := (i / 2) + 1 //nolint:mnd // dividing ply index by 2 to get full-move number is self-explanatory
+		// Compute the full-move number correctly regardless of the starting
+		// position. startBlack is 1 when the game begins with Black to move,
+		// which shifts the ply-to-move mapping by one.
+		//nolint:mnd // arithmetic: (ply + black-offset) / 2 gives full-move number
+		moveNumber := startMoveNum + (i+startBlack)/2
 
 		infos = append(infos, moveInfo{
 			UCIMove:    moveToUCI(move),
@@ -60,7 +82,34 @@ func parsePGN(pgn string) ([]moveInfo, error) {
 		})
 	}
 
-	return infos, nil
+	return gameInfo{InitialFEN: initialFEN, Moves: infos}, nil
+}
+
+// parseFENMoveContext extracts the full-move number and starting-side offset
+// from a FEN string. It returns (startMoveNum, startBlack) where startBlack is
+// 1 if Black is to move in the FEN (so that ply indices map correctly to
+// full-move numbers) and 0 otherwise. On any parse error the function returns
+// safe defaults (1, 0) corresponding to the standard starting position.
+func parseFENMoveContext(fen string) (startMoveNum, startBlack int) {
+	parts := strings.Fields(fen)
+
+	const fenFields = 6
+
+	if len(parts) < fenFields {
+		return 1, 0
+	}
+
+	moveNum, err := strconv.Atoi(parts[5])
+	if err != nil || moveNum < 1 {
+		moveNum = 1
+	}
+
+	blackOffset := 0
+	if parts[1] == "b" {
+		blackOffset = 1
+	}
+
+	return moveNum, blackOffset
 }
 
 // moveToUCI converts a *chess.Move to UCI long algebraic notation.
