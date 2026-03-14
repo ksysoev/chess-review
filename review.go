@@ -19,6 +19,15 @@ type chessEngine interface {
 
 // MoveReview holds the analysis result for a single half-move (ply).
 type MoveReview struct {
+	// MateInBefore is non-nil when the position before this move has a forced-mate
+	// sequence. Positive means the side to move can force checkmate in that many
+	// moves; negative means they are being mated in that many moves.
+	MateInBefore *int
+	// MateInAfter is non-nil when the position after this move has a forced-mate
+	// sequence, expressed from the perspective of the side that just moved.
+	// Positive means the side that just moved can still force checkmate in that many
+	// moves; negative means the opponent now has the forced mate in that many moves.
+	MateInAfter *int
 	// PlayedMove is the move that was actually played, in UCI notation (e.g. "e2e4").
 	PlayedMove string
 	// BestMove is the engine's top-recommended move at the given depth.
@@ -119,7 +128,7 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 	playedSoFar := make([]string, 0, len(gi.Moves))
 
 	// Evaluate the initial position once before the loop.
-	currentScore, bestMove, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
+	currentScore, bestMove, currentMateIn, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 	if analyzeErr != nil {
 		return nil, analyzeErr
 	}
@@ -127,10 +136,11 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 	for _, mv := range gi.Moves {
 		scoreBefore := currentScore
 		thisBestMove := bestMove
+		mateInBefore := currentMateIn
 
 		playedSoFar = append(playedSoFar, mv.UCIMove)
 
-		nextScore, nextBestMove, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
+		nextScore, nextBestMove, nextMateIn, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 		if analyzeErr != nil {
 			return nil, analyzeErr
 		}
@@ -139,6 +149,15 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		// perspective, so we flip the sign to keep it in the played-side's frame.
 		scoreAfterFromPlayedSide := -nextScore
 		delta := scoreAfterFromPlayedSide - scoreBefore
+
+		// Flip nextMateIn into the played side's frame: if the opponent now has
+		// mate-in-N (positive from their POV), that is -N from the played side.
+		var mateInAfter *int
+
+		if nextMateIn != nil {
+			v := -*nextMateIn
+			mateInAfter = &v
+		}
 
 		reviews = append(reviews, MoveReview{
 			PlayedMove:     mv.UCIMove,
@@ -149,6 +168,8 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
 			Classification: Classify(delta, mv.UCIMove, thisBestMove),
+			MateInBefore:   mateInBefore,
+			MateInAfter:    mateInAfter,
 		})
 
 		// Carry forward: the opponent's next "before" score is -nextScore from
@@ -157,6 +178,7 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		// which is exactly nextScore as returned by the engine.
 		currentScore = nextScore
 		bestMove = nextBestMove
+		currentMateIn = nextMateIn
 	}
 
 	return reviews, nil
@@ -164,28 +186,31 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 
 // analyzePosition sets the engine position to the given sequence of UCI moves
 // starting from initialFEN, runs a depth-limited search, and returns the
-// centipawn score and best move.
+// centipawn score, best move, and forced-mate distance (if any).
 //
 // initialFEN must be a valid FEN string (typically the first position of the
 // parsed game). Using the game's actual starting FEN rather than always
 // stockfish.StartPosition ensures correctness for PGNs with SetUp/FEN headers.
 //
-// Mate scores reported by the engine are mapped to ±mateScoreSentinel so that
-// downstream centipawn arithmetic remains meaningful. Returns ErrEngineFailure
-// if the engine stream closes without ever producing a best move.
-func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves []string) (score int, bestMove string, err error) {
+// mateIn is non-nil when the engine reports a forced-mate sequence: positive
+// means the side to move mates in that many moves, negative means they are
+// being mated. Mate scores are also mapped to ±mateScoreSentinel in the
+// returned centipawn score so that downstream arithmetic remains meaningful.
+// Returns ErrEngineFailure if the engine stream closes without ever producing
+// a best move.
+func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves []string) (score int, bestMove string, mateIn *int, err error) {
 	pos := stockfish.FENPosition(initialFEN)
 	if len(moves) > 0 {
 		pos = pos.WithMoves(moves...)
 	}
 
 	if setErr := r.engine.SetPosition(pos); setErr != nil {
-		return 0, "", &ErrEngineFailure{Cause: setErr, Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
+		return 0, "", nil, &ErrEngineFailure{Cause: setErr, Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
 	}
 
 	ch, goErr := r.engine.Go(ctx, &stockfish.SearchParams{Depth: r.cfg.depth})
 	if goErr != nil {
-		return 0, "", &ErrEngineFailure{Cause: goErr, Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
+		return 0, "", nil, &ErrEngineFailure{Cause: goErr, Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
 	}
 
 	bestMoveFound := false
@@ -198,14 +223,21 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 			break
 		}
 
+		if info.Score.Type == stockfish.ScoreTypeMate {
+			n := info.Score.Value
+			mateIn = &n
+		} else {
+			mateIn = nil
+		}
+
 		score = normalizeScore(info.Score)
 	}
 
 	if !bestMoveFound {
-		return 0, "", &ErrEngineFailure{Reason: "engine returned no best move"}
+		return 0, "", nil, &ErrEngineFailure{Reason: "engine returned no best move"}
 	}
 
-	return score, bestMove, nil
+	return score, bestMove, mateIn, nil
 }
 
 // normalizeScore converts a stockfish Score to a centipawn integer.

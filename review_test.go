@@ -354,6 +354,122 @@ func TestReviewer_ReviewGame_MateScore(t *testing.T) {
 	// White played e4 but had a forced mate with d2d4 — classified as Miss.
 	assert.Equal(t, Miss, reviews[0].Classification)
 	assert.Equal(t, mateScoreSentinel, reviews[0].ScoreBefore)
+
+	// MateInBefore on white's move: mate-in-1 was available before white moved.
+	require.NotNil(t, reviews[0].MateInBefore)
+	assert.Equal(t, 1, *reviews[0].MateInBefore)
+
+	// After e4 the engine reported cp score 0 (no forced mate) so MateInAfter is nil.
+	assert.Nil(t, reviews[0].MateInAfter)
+
+	// Black's move: no forced mate in the position before black moves.
+	assert.Nil(t, reviews[1].MateInBefore)
+	assert.Nil(t, reviews[1].MateInAfter)
+}
+
+func TestReviewer_ReviewGame_MateInNegative(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	// call 0 (initial): being mated in 2 (opponent has forced mate).
+	// call 1 (after e4): cp score 0.
+	// call 2 (after e5): cp score 0.
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeMateInfo(-2), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(0), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(0), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	// White's move: being mated in 2 before moving.
+	require.NotNil(t, reviews[0].MateInBefore)
+	assert.Equal(t, -2, *reviews[0].MateInBefore)
+
+	// After e4 the engine reported cp score 0 — no forced mate in the resulting position.
+	assert.Nil(t, reviews[0].MateInAfter)
+
+	// Black's move: no forced mate before or after.
+	assert.Nil(t, reviews[1].MateInBefore)
+	assert.Nil(t, reviews[1].MateInAfter)
+}
+
+func TestReviewer_ReviewGame_NoMateIn(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	assert.Nil(t, reviews[0].MateInBefore)
+	assert.Nil(t, reviews[0].MateInAfter)
+	assert.Nil(t, reviews[1].MateInBefore)
+	assert.Nil(t, reviews[1].MateInAfter)
+}
+
+func TestReviewer_ReviewGame_MateInAfter(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	// call 0 (initial, white to move):  cp score 0, best=e2e4
+	// call 1 (after e4, black to move): mate-in-3 for black (opponent) → from
+	//                                    white's frame MateInAfter = -3
+	// call 2 (after e5, white to move): cp score 0, best=d2d4
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(0), makeBestMoveInfo("e2e4"),
+			makeMateInfo(3), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(0), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	// White's move: no forced mate before; opponent has mate-in-3 after → -3 from white's POV.
+	assert.Nil(t, reviews[0].MateInBefore)
+	require.NotNil(t, reviews[0].MateInAfter)
+	assert.Equal(t, -3, *reviews[0].MateInAfter)
+
+	// Black's move: the MateInBefore is the engine's mate-in-3 (from black's POV, positive).
+	require.NotNil(t, reviews[1].MateInBefore)
+	assert.Equal(t, 3, *reviews[1].MateInBefore)
+	assert.Nil(t, reviews[1].MateInAfter)
 }
 
 func TestNormalizeScore(t *testing.T) {
