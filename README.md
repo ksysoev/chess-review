@@ -18,7 +18,7 @@ A Go library for analyzing chess games using the [Stockfish](https://stockfishch
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.26+
 - A [Stockfish](https://stockfishchess.org/download/) binary accessible on the system
 
 ## Installation
