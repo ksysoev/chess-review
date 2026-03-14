@@ -6,8 +6,8 @@ import (
 )
 
 // numClassifications is the total number of Classification values.
-// It must stay in sync with the iota constants in classify.go.
-const numClassifications = 8
+// Derived from the last iota constant so it stays in sync automatically.
+const numClassifications = int(Brilliant) + 1
 
 // GamePhase represents a named phase of a chess game based on move number.
 type GamePhase int
@@ -92,14 +92,20 @@ func Summarize(reviews []MoveReview, whiteName, blackName string) GameSummary {
 
 	for _, r := range reviews {
 		var acc *playerAccum
-		if r.Color == "white" {
+
+		switch r.Color {
+		case "white":
 			acc = &white
-		} else {
+		case "black":
 			acc = &black
+		default:
+			// Skip moves with an unrecognised color so they do not silently
+			// skew one player's statistics.
+			continue
 		}
 
 		// Classification counts.
-		if int(r.Classification) < numClassifications {
+		if r.Classification >= 0 && int(r.Classification) < numClassifications {
 			acc.counts[r.Classification]++
 		}
 
@@ -172,9 +178,11 @@ func phaseOf(moveNumber int) GamePhase {
 	}
 }
 
-// cpLoss returns the centipawn loss for a move delta, clamped to [0, ∞).
-// Sentinel values (≥ missThreshold in absolute magnitude) are excluded by
-// returning -1, signalling the caller to skip this move from CPL averages.
+// cpLoss returns the centipawn loss for a move delta.
+// Positive score deltas (improvements) are clamped to 0 — no loss.
+// Positive losses that reach or exceed missThreshold are mate-sentinel-based
+// and are excluded by returning -1, signalling the caller to skip the move
+// from CPL averages entirely.
 func cpLoss(scoreDelta int) int {
 	loss := -scoreDelta
 	if loss < 0 {
