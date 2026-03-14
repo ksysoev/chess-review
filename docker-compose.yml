@@ -3,8 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Mount the current directory so any .pgn file in it is accessible
+    # Mount the ./games directory so any .pgn file placed there is accessible
     # inside the container at /games/<filename>.
-    # Usage: docker compose run --rm chess-review /games/my-game.pgn
+    # Usage: place my-game.pgn in ./games, then run:
+    #   docker compose run --rm chess-review /games/my-game.pgn
     volumes:
       - ./games:/games:ro
