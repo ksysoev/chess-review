@@ -127,6 +127,49 @@ func TestDetectSacrifice(t *testing.T) {
 			uciMove:  "e5f6",
 			expected: false,
 		},
+		// --- Promotion cases ---
+		{
+			// White pawn on e7 captures the Black rook on d8 and promotes to queen.
+			// movedValue = queenValue (900) > capturedValue = rookValue (500).
+			// Black rook on c8 can recapture on d8 → sacrifice.
+			// Verifies that move.Promo() is used instead of the pawn's value:
+			// without the promotion branch movedValue would be pawnValue (100) < rookValue (500)
+			// and the function would incorrectly return false.
+			name:     "promotion to queen by capturing rook on rook-defended square",
+			fen:      "2rr4/4P3/8/8/8/6K1/8/7k w - - 0 1",
+			uciMove:  "e7d8q",
+			expected: true,
+		},
+		{
+			// White pawn on e7 promotes to queen on an empty, undefended square.
+			// movedValue = queenValue (900) > capturedValue = 0, but no Black piece
+			// can recapture on e8 → not a sacrifice.
+			name:     "promotion to queen on empty undefended square",
+			fen:      "8/4P3/8/8/8/8/8/4K2k w - - 0 1",
+			uciMove:  "e7e8q",
+			expected: false,
+		},
+		{
+			// White pawn on e7 captures the Black rook on d8 and under-promotes to knight.
+			// movedValue = knightValue (300) < capturedValue = rookValue (500) →
+			// material is gained, not sacrificed.
+			// Verifies that the promoted type (knight) rather than pawn is used for comparison.
+			name:     "under-promotion to knight capturing rook — gaining material is not a sacrifice",
+			fen:      "3r4/4P3/8/8/8/6K1/8/7k w - - 0 1",
+			uciMove:  "e7d8n",
+			expected: false,
+		},
+		{
+			// White pawn on e7 promotes to queen on the empty e8 square.
+			// Black rook on e1 can recapture on e8 in one move →
+			// movedValue = queenValue (900) > capturedValue = 0 and recapture exists → sacrifice.
+			// Verifies the promotion-without-capture branch correctly uses promoted piece value.
+			// (White king is on g3 to avoid being in check from the rook on e1.)
+			name:     "promotion to queen on empty square defended by rook",
+			fen:      "8/4P3/8/8/8/6K1/8/4r2k w - - 0 1",
+			uciMove:  "e7e8q",
+			expected: true,
+		},
 	}
 
 	for _, tc := range tests {
