@@ -140,7 +140,7 @@ func TestClassify(t *testing.T) {
 			expected:    Good,
 		},
 		{
-			name:        "sacrifice allowed when position winning but below queen value (300 cp)",
+			name:        "sacrifice allowed when position winning well below suppression threshold (300 cp)",
 			scoreDelta:  -5,
 			scoreBefore: 300,
 			playedMove:  "d2d4",
@@ -149,7 +149,7 @@ func TestClassify(t *testing.T) {
 			expected:    Brilliant,
 		},
 		{
-			name:        "sacrifice allowed when position winning but below queen value (500 cp)",
+			name:        "sacrifice allowed when position winning below suppression threshold (500 cp)",
 			scoreDelta:  0,
 			scoreBefore: 500,
 			playedMove:  "e2e4",
