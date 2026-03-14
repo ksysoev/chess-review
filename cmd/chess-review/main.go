@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"os/signal"
-	"runtime"
 	"syscall"
 	"text/tabwriter"
 
@@ -72,7 +71,7 @@ func run(_ *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	reviewer, err := chessreview.New(stockfishPath, chessreview.WithThreads(runtime.NumCPU()))
+	reviewer, err := chessreview.New(stockfishPath)
 	if err != nil {
 		return fmt.Errorf("starting engine: %w", err)
 	}

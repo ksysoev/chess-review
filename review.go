@@ -233,6 +233,17 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 
 	bestMoveFound := false
 
+	// lastExactScore and lastExactMateIn track the most recent info line that
+	// carried an exact (non-bound) score. We prefer exact scores over lowerbound
+	// or upperbound values because bound scores are only guaranteed to be one
+	// side of the true minimax value; using them would introduce measurement
+	// error into per-move CPL and therefore accuracy/game-rating calculations.
+	var (
+		lastExactScore  int
+		lastExactMateIn *int
+		hasExact        bool
+	)
+
 	for info := range ch {
 		if info.IsBestMove {
 			bestMove = info.BestMove
@@ -241,6 +252,7 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 			break
 		}
 
+		// Always track the latest score as the fallback.
 		if info.Score.Type == stockfish.ScoreTypeMate {
 			n := info.Score.Value
 			mateIn = &n
@@ -249,10 +261,22 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 		}
 
 		score = normalizeScore(info.Score)
+
+		// Additionally track the last score that was exact so we can prefer it.
+		if info.Score.Bound == stockfish.ScoreBoundExact {
+			lastExactScore = score
+			lastExactMateIn = mateIn
+			hasExact = true
+		}
 	}
 
 	if !bestMoveFound {
 		return 0, "", nil, &ErrEngineFailure{Reason: "engine returned no best move"}
+	}
+
+	// Prefer the last exact score over any bound score seen last.
+	if hasExact {
+		return lastExactScore, bestMove, lastExactMateIn, nil
 	}
 
 	return score, bestMove, mateIn, nil
