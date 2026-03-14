@@ -1,5 +1,11 @@
 # chess-review
 
+[![Tests](https://github.com/ksysoev/chess-review/actions/workflows/tests.yml/badge.svg)](https://github.com/ksysoev/chess-review/actions/workflows/tests.yml)
+[![codecov](https://codecov.io/gh/ksysoev/chess-review/graph/badge.svg?token=QFIJMDU6FZ)](https://codecov.io/gh/ksysoev/chess-review)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ksysoev/chess-review)](https://goreportcard.com/report/github.com/ksysoev/chess-review)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ksysoev/chess-review.svg)](https://pkg.go.dev/github.com/ksysoev/chess-review)
+
+
 A Go library for analyzing chess games using the [Stockfish](https://stockfishchess.org/) engine. It parses a PGN game, evaluates each position at a configurable depth, and returns a per-move review with move-quality classifications — similar to chess.com's game review feature.
 
 ## Features
