@@ -205,6 +205,90 @@ func TestNew_InvalidPath(t *testing.T) {
 	assert.ErrorAs(t, err, &engErr)
 }
 
+func TestReviewer_ZeroValue_ReviewGame(t *testing.T) {
+	t.Parallel()
+
+	var r Reviewer
+
+	_, err := r.ReviewGame(context.Background(), "1. e4 e5 *")
+
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+	assert.Contains(t, engErr.Error(), "not initialized")
+}
+
+func TestReviewer_ZeroValue_Close(t *testing.T) {
+	t.Parallel()
+
+	var r Reviewer
+
+	err := r.Close()
+
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+	assert.Contains(t, engErr.Error(), "not initialized")
+}
+
+func TestNew_InvalidOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		opt    Option
+		errMsg string
+	}{
+		{
+			name:   "zero depth",
+			opt:    WithDepth(0),
+			errMsg: "invalid depth",
+		},
+		{
+			name:   "negative depth",
+			opt:    WithDepth(-1),
+			errMsg: "invalid depth",
+		},
+		{
+			name:   "zero threads",
+			opt:    WithThreads(0),
+			errMsg: "invalid threads",
+		},
+		{
+			name:   "negative threads",
+			opt:    WithThreads(-5),
+			errMsg: "invalid threads",
+		},
+		{
+			name:   "zero hash",
+			opt:    WithHash(0),
+			errMsg: "invalid hash size",
+		},
+		{
+			name:   "negative hash",
+			opt:    WithHash(-16),
+			errMsg: "invalid hash size",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// New() validates options before attempting to start the engine,
+			// so it must return an error even with a nonexistent path.
+			_, err := New("/nonexistent/stockfish", tc.opt)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.errMsg)
+		})
+	}
+}
+
 func TestReviewer_ReviewGame_NoBestMove(t *testing.T) {
 	t.Parallel()
 

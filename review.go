@@ -41,6 +41,7 @@ type MoveReview struct {
 }
 
 // Reviewer analyses chess games using a Stockfish engine.
+// It must be created with New; the zero value is not usable.
 type Reviewer struct {
 	engine chessEngine
 	cfg    config
@@ -57,9 +58,13 @@ func New(stockfishPath string, opts ...Option) (*Reviewer, error) {
 		opt(&cfg)
 	}
 
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
 	client, err := stockfish.New(stockfishPath)
 	if err != nil {
-		return nil, &ErrEngineFailure{Reason: fmt.Sprintf("failed to start engine: %s", err.Error())}
+		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("failed to start engine: %s", err.Error())}
 	}
 
 	r := &Reviewer{
@@ -78,6 +83,10 @@ func New(stockfishPath string, opts ...Option) (*Reviewer, error) {
 
 // Close shuts down the underlying Stockfish engine process.
 func (r *Reviewer) Close() error {
+	if r.engine == nil {
+		return &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
+	}
+
 	return r.engine.Close()
 }
 
@@ -89,13 +98,17 @@ func (r *Reviewer) Close() error {
 // Returns ErrInvalidPGN when the PGN cannot be parsed.
 // Returns ErrEngineFailure when communication with the engine fails.
 func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, error) {
+	if r.engine == nil {
+		return nil, &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
+	}
+
 	moves, err := parsePGN(pgn)
 	if err != nil {
 		return nil, err
 	}
 
 	if err = r.engine.NewGame(); err != nil {
-		return nil, &ErrEngineFailure{Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
+		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
 
 	reviews := make([]MoveReview, 0, len(moves))
@@ -165,12 +178,12 @@ func (r *Reviewer) analyzePosition(ctx context.Context, moves []string) (score i
 	}
 
 	if setErr := r.engine.SetPosition(pos); setErr != nil {
-		return 0, "", &ErrEngineFailure{Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
+		return 0, "", &ErrEngineFailure{Cause: setErr, Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
 	}
 
 	ch, goErr := r.engine.Go(ctx, &stockfish.SearchParams{Depth: r.cfg.depth})
 	if goErr != nil {
-		return 0, "", &ErrEngineFailure{Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
+		return 0, "", &ErrEngineFailure{Cause: goErr, Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
 	}
 
 	bestMoveFound := false
@@ -216,7 +229,7 @@ func (r *Reviewer) applyEngineOptions() error {
 		stockfish.WithHash(r.cfg.hashMB),
 	)
 	if err != nil {
-		return &ErrEngineFailure{Reason: fmt.Sprintf("failed to apply engine options: %s", err.Error())}
+		return &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("failed to apply engine options: %s", err.Error())}
 	}
 
 	return nil

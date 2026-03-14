@@ -25,7 +25,7 @@ func parsePGN(pgn string) ([]moveInfo, error) {
 
 	games, err := chess.GamesFromPGN(reader)
 	if err != nil {
-		return nil, &ErrInvalidPGN{Reason: err.Error()}
+		return nil, &ErrInvalidPGN{Cause: err, Reason: err.Error()}
 	}
 
 	if len(games) == 0 {

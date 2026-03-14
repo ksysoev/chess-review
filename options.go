@@ -1,5 +1,7 @@
 package chessreview
 
+import "fmt"
+
 const (
 	defaultDepth   = 18
 	defaultThreads = 1
@@ -48,4 +50,22 @@ func defaultConfig() config {
 		threads: defaultThreads,
 		hashMB:  defaultHashMB,
 	}
+}
+
+// validate checks that all config fields have sensible values.
+// Returns an error if any value is out of the acceptable range.
+func (c *config) validate() error {
+	if c.depth < 1 {
+		return fmt.Errorf("invalid depth %d: must be >= 1", c.depth)
+	}
+
+	if c.threads < 1 {
+		return fmt.Errorf("invalid threads %d: must be >= 1", c.threads)
+	}
+
+	if c.hashMB < 1 {
+		return fmt.Errorf("invalid hash size %d MB: must be >= 1", c.hashMB)
+	}
+
+	return nil
 }
