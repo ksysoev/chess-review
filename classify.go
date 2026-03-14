@@ -6,7 +6,7 @@ type Classification int
 const (
 	// Best indicates the move matches the engine's top choice.
 	Best Classification = iota
-	// Excellent indicates a near-optimal move with minimal centipawn loss (1–10 cp).
+	// Excellent indicates a near-optimal move with minimal centipawn loss (0–10 cp).
 	Excellent
 	// Good indicates a solid move with small centipawn loss (11–25 cp).
 	Good
@@ -47,6 +47,11 @@ const (
 	goodThreshold       = 25
 	inaccuracyThreshold = 100
 	mistakeThreshold    = 300
+	// missThreshold is the centipawn loss at which a move is classified as Miss.
+	// It is set just below mateScoreSentinel so that moves that throw away a
+	// forced mate (mapped to ±30000 by normalizeScore) are caught here rather
+	// than falling through to Blunder.
+	missThreshold = 20_000
 )
 
 // Classify returns the move classification given the centipawn loss and whether
@@ -59,11 +64,12 @@ const (
 // Thresholds mirror chess.com's game review grading:
 //
 //	Best       – played move equals engine best
-//	Excellent  – 1–10 cp loss
+//	Excellent  – 0–10 cp loss
 //	Good       – 11–25 cp loss
 //	Inaccuracy – 26–100 cp loss
 //	Mistake    – 101–300 cp loss
 //	Blunder    – > 300 cp loss
+//	Miss       – move throws away a forced mate (sentinel loss ≥ 20000 cp)
 func Classify(scoreDelta int, playedMove, bestMove string) Classification {
 	if playedMove == bestMove {
 		return Best
@@ -75,6 +81,8 @@ func Classify(scoreDelta int, playedMove, bestMove string) Classification {
 	}
 
 	switch {
+	case loss >= missThreshold:
+		return Miss
 	case loss <= excellentThreshold:
 		return Excellent
 	case loss <= goodThreshold:

@@ -82,8 +82,9 @@ func (r *Reviewer) Close() error {
 }
 
 // ReviewGame analyses the provided PGN string and returns a MoveReview for each
-// half-move in the game. It evaluates both the position before and after each
-// played move at the configured depth to determine the centipawn loss.
+// half-move in the game. It evaluates each position once at the configured depth
+// (N+1 total calls for N plies) and carries the score forward between plies to
+// avoid redundant engine work.
 //
 // Returns ErrInvalidPGN when the PGN cannot be parsed.
 // Returns ErrEngineFailure when communication with the engine fails.
@@ -100,42 +101,63 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 	reviews := make([]MoveReview, 0, len(moves))
 	playedSoFar := make([]string, 0, len(moves))
 
+	// Evaluate the initial position once before the loop.
+	currentScore, bestMove, analyzeErr := r.analyzePosition(ctx, playedSoFar)
+	if analyzeErr != nil {
+		return nil, analyzeErr
+	}
+
 	for _, mv := range moves {
-		scoreBefore, bestMove, analyzeErr := r.analyzePosition(ctx, playedSoFar)
-		if analyzeErr != nil {
-			return nil, analyzeErr
-		}
+		scoreBefore := currentScore
+		thisBestMove := bestMove
 
 		playedSoFar = append(playedSoFar, mv.UCIMove)
 
-		scoreAfter, _, analyzeErr := r.analyzePosition(ctx, playedSoFar)
+		nextScore, nextBestMove, analyzeErr := r.analyzePosition(ctx, playedSoFar)
 		if analyzeErr != nil {
 			return nil, analyzeErr
 		}
 
-		// Negate scoreAfter: after the move, Stockfish evaluates from the opponent's
+		// Negate nextScore: after the move Stockfish evaluates from the opponent's
 		// perspective, so we flip the sign to keep it in the played-side's frame.
-		scoreAfterFromPlayedSide := -scoreAfter
+		scoreAfterFromPlayedSide := -nextScore
 		delta := scoreAfterFromPlayedSide - scoreBefore
 
 		reviews = append(reviews, MoveReview{
 			PlayedMove:     mv.UCIMove,
-			BestMove:       bestMove,
+			BestMove:       thisBestMove,
 			Color:          mv.Color,
 			MoveNumber:     mv.MoveNumber,
 			ScoreBefore:    scoreBefore,
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
-			Classification: Classify(delta, mv.UCIMove, bestMove),
+			Classification: Classify(delta, mv.UCIMove, thisBestMove),
 		})
+
+		// Carry forward: the opponent's next "before" score is -nextScore from
+		// their perspective (already done via the negation above), but for the
+		// next iteration currentScore must be in the next side-to-move's frame,
+		// which is exactly nextScore as returned by the engine.
+		currentScore = nextScore
+		bestMove = nextBestMove
 	}
 
 	return reviews, nil
 }
 
+// mateScoreSentinel is the centipawn value used to represent a forced mate.
+// Positive means the side to move has a forced mate; negative means they are
+// being mated. The magnitude is chosen to be far outside any real centipawn
+// range while still leaving room for delta arithmetic without overflow.
+const mateScoreSentinel = 30_000
+
 // analyzePosition sets the engine position to the given sequence of UCI moves
 // starting from the initial position, runs a depth-limited search, and returns
 // the centipawn score and best move.
+//
+// Mate scores reported by the engine are mapped to ±mateScoreSentinel so that
+// downstream centipawn arithmetic remains meaningful. Returns ErrEngineFailure
+// if the engine stream closes without ever producing a best move.
 func (r *Reviewer) analyzePosition(ctx context.Context, moves []string) (score int, bestMove string, err error) {
 	pos := stockfish.StartPosition()
 	if len(moves) > 0 {
@@ -151,17 +173,40 @@ func (r *Reviewer) analyzePosition(ctx context.Context, moves []string) (score i
 		return 0, "", &ErrEngineFailure{Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
 	}
 
+	bestMoveFound := false
+
 	for info := range ch {
 		if info.IsBestMove {
 			bestMove = info.BestMove
+			bestMoveFound = true
 
 			break
 		}
 
-		score = info.Score.Value
+		score = normalizeScore(info.Score)
+	}
+
+	if !bestMoveFound {
+		return 0, "", &ErrEngineFailure{Reason: "engine returned no best move"}
 	}
 
 	return score, bestMove, nil
+}
+
+// normalizeScore converts a stockfish Score to a centipawn integer.
+// Centipawn scores are returned as-is. Mate scores are mapped to
+// ±mateScoreSentinel: positive when the side to move has a forced mate,
+// negative when they are being mated.
+func normalizeScore(s stockfish.Score) int {
+	if s.Type != stockfish.ScoreTypeMate {
+		return s.Value
+	}
+
+	if s.Value >= 0 {
+		return mateScoreSentinel
+	}
+
+	return -mateScoreSentinel
 }
 
 // applyEngineOptions configures the engine with the settings from cfg.

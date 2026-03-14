@@ -73,6 +73,16 @@ func makeDepthInfo(score int) stockfish.SearchInfo {
 	}
 }
 
+// makeMateInfo returns a non-bestmove SearchInfo with a mate-in-N score.
+// Positive n means the side to move has a forced mate; negative means they are
+// being mated.
+func makeMateInfo(n int) stockfish.SearchInfo {
+	return stockfish.SearchInfo{
+		Score: stockfish.Score{Value: n, Type: stockfish.ScoreTypeMate},
+		Depth: 1,
+	}
+}
+
 // makeBestMoveInfo returns a bestmove SearchInfo.
 func makeBestMoveInfo(bestMove string) stockfish.SearchInfo {
 	return stockfish.SearchInfo{
@@ -94,18 +104,14 @@ func TestReviewer_ReviewGame_TwoMoves(t *testing.T) {
 
 1. e4 e5 *`
 
-	// analyzePosition is called 4 times total (before/after × 2 moves).
-	// Each call gets a depth info followed by a bestmove info.
-	// Score perspective:
-	//   call 0 (before e4, white to move): score=20, best=e2e4
-	//   call 1 (after e4, black to move):  score=30, best=e7e5
-	//   call 2 (before e5, black to move): score=25, best=e7e5
-	//   call 3 (after e5, white to move):  score=10, best=d2d4
+	// analyzePosition is called 3 times total (N+1 for 2 moves):
+	//   call 0 (initial position, white to move):  score=20, best=e2e4
+	//   call 1 (after e4, black to move):          score=30, best=e7e5
+	//   call 2 (after e5, white to move):          score=10, best=d2d4
 	engine := &mockEngine{
 		searchInfos: []stockfish.SearchInfo{
 			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
 			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
-			makeDepthInfo(25), makeBestMoveInfo("e7e5"),
 			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
 		},
 	}
@@ -197,4 +203,112 @@ func TestNew_InvalidPath(t *testing.T) {
 	var engErr *ErrEngineFailure
 
 	assert.ErrorAs(t, err, &engErr)
+}
+
+func TestReviewer_ReviewGame_NoBestMove(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	// The mock closes the channel after a depth info but never sends a bestmove
+	// line — analyzePosition must return ErrEngineFailure.
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), // no makeBestMoveInfo — channel closes here
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	_, err := r.ReviewGame(context.Background(), pgn)
+
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+	assert.Contains(t, engErr.Error(), "no best move")
+}
+
+func TestReviewer_ReviewGame_MateScore(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	// call 0 (initial, white to move):  mate-in-1 for white → sentinel +30000,
+	//                                    but best move is d2d4 (not e2e4).
+	// call 1 (after e4, black to move): cp score 0, best=e7e5
+	// call 2 (after e5, white to move): cp score 0, best=d2d4
+	//
+	// White plays e4 but had a forced mate with d2d4 → delta = -0 - 30000 = -30000
+	// loss = 30000 → Miss (threw away the forced mate).
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeMateInfo(1), makeBestMoveInfo("d2d4"), // best is d2d4, not e2e4
+			makeDepthInfo(0), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(0), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	// White played e4 but had a forced mate with d2d4 — classified as Miss.
+	assert.Equal(t, Miss, reviews[0].Classification)
+	assert.Equal(t, mateScoreSentinel, reviews[0].ScoreBefore)
+}
+
+func TestNormalizeScore(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		score    stockfish.Score
+		expected int
+	}{
+		{
+			name:     "centipawn score passed through",
+			score:    stockfish.Score{Type: stockfish.ScoreTypeCentipawns, Value: 42},
+			expected: 42,
+		},
+		{
+			name:     "negative centipawn score passed through",
+			score:    stockfish.Score{Type: stockfish.ScoreTypeCentipawns, Value: -100},
+			expected: -100,
+		},
+		{
+			name:     "positive mate score maps to +sentinel",
+			score:    stockfish.Score{Type: stockfish.ScoreTypeMate, Value: 3},
+			expected: mateScoreSentinel,
+		},
+		{
+			name:     "negative mate score maps to -sentinel",
+			score:    stockfish.Score{Type: stockfish.ScoreTypeMate, Value: -2},
+			expected: -mateScoreSentinel,
+		},
+		{
+			name:     "mate-in-1 maps to +sentinel",
+			score:    stockfish.Score{Type: stockfish.ScoreTypeMate, Value: 1},
+			expected: mateScoreSentinel,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := normalizeScore(tc.score)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }

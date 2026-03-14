@@ -17,8 +17,7 @@ type moveInfo struct {
 }
 
 // parsePGN parses a PGN string and returns an ordered slice of moveInfo for each
-// half-move (ply) in the game, along with the cumulative UCI move list up to
-// (but not including) that ply so the engine can reconstruct positions.
+// half-move (ply) in the game.
 //
 // It returns ErrInvalidPGN when the PGN cannot be parsed or contains no moves.
 func parsePGN(pgn string) ([]moveInfo, error) {
