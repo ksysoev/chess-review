@@ -1,6 +1,8 @@
 // Package main is the entry point for the chess-review CLI.
 // It reads a PGN file, analyses every half-move using the Stockfish engine,
 // and prints a per-move review table followed by a game summary to standard output.
+// Move information is printed as soon as each position is analysed, so the user
+// can follow progress without waiting for the full game to complete.
 package main
 
 import (
@@ -10,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"text/tabwriter"
 
 	chessreview "github.com/ksysoev/chess-review"
 	"github.com/spf13/cobra"
@@ -20,13 +21,20 @@ const (
 	defaultStockfishPath = "/usr/games/stockfish"
 	envStockfishPath     = "STOCKFISH_PATH"
 
-	tabWriterMinWidth = 0
-	tabWriterTabWidth = 0
-	tabWriterPadding  = 2
-
 	flagDepth        = "depth"
 	flagDepthDefault = chessreview.DefaultDepth
 	flagDepthUsage   = "Stockfish search depth (higher = stronger but slower, default 18)"
+
+	// Column widths for the fixed-format streaming move table.
+	colMove           = 4
+	colColor          = 5
+	colMoveUCI        = 6
+	colClassification = 14
+	colMateBefore     = 11
+	colMateAfter      = 10
+	colScoreBefore    = 12
+	colScoreAfter     = 11
+	colDelta          = 7
 )
 
 func main() {
@@ -42,6 +50,9 @@ func newRootCmd() *cobra.Command {
 		Short: "Analyse a chess game PGN file using Stockfish",
 		Long: `chess-review reads a PGN file and produces a per-move analysis table
 followed by an aggregated game summary.
+
+Move information is printed as soon as each position is analysed; you do not
+need to wait for the entire game to be processed before seeing results.
 
 The Stockfish binary path is read from the STOCKFISH_PATH environment variable
 (default: /usr/games/stockfish).
@@ -61,7 +72,7 @@ Example:
 }
 
 // run is the cobra command handler. It orchestrates reading the PGN file,
-// constructing the Reviewer, and printing the analysis table and game summary.
+// constructing the Reviewer, and streaming the analysis table and game summary.
 func run(cmd *cobra.Command, args []string) error {
 	pgnPath := args[0]
 
@@ -94,14 +105,27 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	result, err := reviewer.ReviewGameFull(ctx, string(pgnBytes))
-	if err != nil {
-		return fmt.Errorf("reviewing game: %w", err)
+	movesCh, errCh, summariesCh := reviewer.ReviewGameFullStream(ctx, string(pgnBytes))
+
+	printTableHeader()
+
+	for mr := range movesCh {
+		printTableRow(&mr)
 	}
 
-	printTable(result.Reviews)
+	if streamErr := <-errCh; streamErr != nil {
+		return fmt.Errorf("reviewing game: %w", streamErr)
+	}
+
+	summary, ok := <-summariesCh
+	if !ok {
+		// errCh carried no error yet the summary channel was closed without a
+		// value — this violates the stream contract and should never happen.
+		return fmt.Errorf("reviewing game: stream closed without a summary")
+	}
+
 	fmt.Fprintln(os.Stdout)
-	printSummary(&result.Summary)
+	printSummary(&summary)
 
 	return nil
 }
@@ -120,32 +144,51 @@ func formatMateIn(mateIn *int) string {
 	return fmt.Sprintf("-M%d", -*mateIn)
 }
 
-// printTable writes the move review slice as a human-readable tab-aligned table
-// to standard output.
-func printTable(reviews []chessreview.MoveReview) {
-	w := tabwriter.NewWriter(os.Stdout, tabWriterMinWidth, tabWriterTabWidth, tabWriterPadding, ' ', 0)
+// printTableHeader writes the fixed-width column headers for the move table.
+func printTableHeader() {
+	fmt.Fprintf(os.Stdout,
+		"%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+		colMove, "Move",
+		colColor, "Color",
+		colMoveUCI, "Played",
+		colMoveUCI, "Best",
+		colClassification, "Classification",
+		colMateBefore, "Mate Before",
+		colMateAfter, "Mate After",
+		colScoreBefore, "Score Before",
+		colScoreAfter, "Score After",
+		colDelta, "Delta",
+	)
+	fmt.Fprintf(os.Stdout,
+		"%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+		colMove, "----",
+		colColor, "-----",
+		colMoveUCI, "------",
+		colMoveUCI, "----",
+		colClassification, "--------------",
+		colMateBefore, "-----------",
+		colMateAfter, "----------",
+		colScoreBefore, "------------",
+		colScoreAfter, "-----------",
+		colDelta, "-------",
+	)
+}
 
-	fmt.Fprintln(w, "Move\tColor\tPlayed\tBest\tClassification\tMate Before\tMate After\tScore Before\tScore After\tDelta")
-	fmt.Fprintln(w, "----\t-----\t------\t----\t--------------\t-----------\t----------\t------------\t-----------\t-----")
-
-	for _, r := range reviews {
-		fmt.Fprintf(
-			w,
-			"%d\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%+d\n",
-			r.MoveNumber,
-			r.Color,
-			r.PlayedMove,
-			r.BestMove,
-			r.Classification,
-			formatMateIn(r.MateInBefore),
-			formatMateIn(r.MateInAfter),
-			r.ScoreBefore,
-			r.ScoreAfter,
-			r.ScoreDelta,
-		)
-	}
-
-	_ = w.Flush()
+// printTableRow writes a single move review as a fixed-width row to stdout.
+func printTableRow(r *chessreview.MoveReview) {
+	fmt.Fprintf(os.Stdout,
+		"%-*d  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*d  %-*d  %+*d\n",
+		colMove, r.MoveNumber,
+		colColor, r.Color,
+		colMoveUCI, r.PlayedMove,
+		colMoveUCI, r.BestMove,
+		colClassification, r.Classification,
+		colMateBefore, formatMateIn(r.MateInBefore),
+		colMateAfter, formatMateIn(r.MateInAfter),
+		colScoreBefore, r.ScoreBefore,
+		colScoreAfter, r.ScoreAfter,
+		colDelta, r.ScoreDelta,
+	)
 }
 
 // formatAccuracy formats an accuracy float as "XX.X%" or "-" for NaN.
@@ -158,10 +201,8 @@ func formatAccuracy(acc float64) string {
 }
 
 // printSummary writes the aggregated game summary as a two-column
-// (White | Black) tab-aligned table to standard output.
+// (White | Black) fixed-width table to standard output.
 func printSummary(s *chessreview.GameSummary) {
-	w := tabwriter.NewWriter(os.Stdout, tabWriterMinWidth, tabWriterTabWidth, tabWriterPadding, ' ', 0)
-
 	whiteName := s.WhitePlayer
 	if whiteName == "" {
 		whiteName = "White"
@@ -172,8 +213,17 @@ func printSummary(s *chessreview.GameSummary) {
 		blackName = "Black"
 	}
 
-	fmt.Fprintf(w, "Game Summary\t%s\t%s\n", whiteName, blackName)
-	fmt.Fprintln(w, "------------\t-------\t-------")
+	const (
+		colLabel = 14
+		colValue = 10
+	)
+
+	row := func(label, white, black string) {
+		fmt.Fprintf(os.Stdout, "%-*s  %-*s  %-*s\n", colLabel, label, colValue, white, colValue, black)
+	}
+
+	row("Game Summary", whiteName, blackName)
+	row("------------", "-------", "-------")
 
 	var opening string
 
@@ -187,18 +237,13 @@ func printSummary(s *chessreview.GameSummary) {
 	}
 
 	if opening != "" {
-		fmt.Fprintf(w, "Opening\t%s\t%s\n", opening, opening)
+		row("Opening", opening, opening)
 	}
 
-	fmt.Fprintf(w, "Accuracy\t%s\t%s\n",
-		formatAccuracy(s.White.Accuracy),
-		formatAccuracy(s.Black.Accuracy))
+	row("Accuracy", formatAccuracy(s.White.Accuracy), formatAccuracy(s.Black.Accuracy))
+	row("Game Rating", fmt.Sprintf("%d", s.White.GameRating), fmt.Sprintf("%d", s.Black.GameRating))
 
-	fmt.Fprintf(w, "Game Rating\t%d\t%d\n",
-		s.White.GameRating,
-		s.Black.GameRating)
-
-	fmt.Fprintln(w, "")
+	fmt.Fprintln(os.Stdout)
 
 	classifications := []chessreview.Classification{
 		chessreview.Book,
@@ -214,13 +259,10 @@ func printSummary(s *chessreview.GameSummary) {
 	}
 
 	for _, c := range classifications {
-		fmt.Fprintf(w, "%s\t%d\t%d\n",
-			c,
-			s.White.ClassificationCounts[c],
-			s.Black.ClassificationCounts[c])
+		row(c.String(), fmt.Sprintf("%d", s.White.ClassificationCounts[c]), fmt.Sprintf("%d", s.Black.ClassificationCounts[c]))
 	}
 
-	fmt.Fprintln(w, "")
+	fmt.Fprintln(os.Stdout)
 
 	phases := []struct {
 		name  string
@@ -232,11 +274,6 @@ func printSummary(s *chessreview.GameSummary) {
 	}
 
 	for _, p := range phases {
-		fmt.Fprintf(w, "%s\t%s\t%s\n",
-			p.name,
-			formatAccuracy(s.White.PhaseAccuracy[p.phase]),
-			formatAccuracy(s.Black.PhaseAccuracy[p.phase]))
+		row(p.name, formatAccuracy(s.White.PhaseAccuracy[p.phase]), formatAccuracy(s.Black.PhaseAccuracy[p.phase]))
 	}
-
-	_ = w.Flush()
 }
