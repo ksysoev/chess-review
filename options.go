@@ -3,7 +3,10 @@ package chessreview
 import "fmt"
 
 const (
-	defaultDepth   = 18
+	// DefaultDepth is the default Stockfish search depth used when no WithDepth
+	// option is provided. It is exported so that callers (e.g. a CLI) can use it
+	// as their own default without duplicating the value.
+	DefaultDepth   = 18
 	defaultThreads = 1
 	defaultHashMB  = 16
 )
@@ -46,7 +49,7 @@ func WithHash(mb int) Option {
 
 func defaultConfig() config {
 	return config{
-		depth:   defaultDepth,
+		depth:   DefaultDepth,
 		threads: defaultThreads,
 		hashMB:  defaultHashMB,
 	}

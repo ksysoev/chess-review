@@ -232,7 +232,7 @@ func TestClassify(t *testing.T) {
 		},
 		// --- Great move cases (1-ply) ---
 		// Rescue from losing (winProb < 0.40) into equal territory.
-		// scoreBefore=-250 → winProb≈0.269 (<0.40); scoreAfter=0 → winProb=0.50 (≥0.40).
+		// scoreBefore=-250 → winProb≈0.349 (<0.40); scoreAfter=0 → winProb=0.50 (≥0.40).
 		// win-prob loss = winProb(-250)-winProb(0) < 0 → clamped to 0 → ≤2% → Great.
 		{
 			name:        "rescue from losing to equal returns Great",
@@ -287,7 +287,7 @@ func TestClassify(t *testing.T) {
 			expected:   Excellent,
 		},
 		// Not Great: losing position stays losing → no rescue → Excellent (position improved slightly).
-		// scoreBefore=-300→winProb≈0.325 (<0.40), scoreAfter=-250→winProb≈0.269 (<0.40) → not rescued → not Great.
+		// scoreBefore=-300→winProb≈0.321 (<0.40), scoreAfter=-250→winProb≈0.349 (<0.40) → not rescued → not Great.
 		{
 			name:        "losing to still-losing move is not Great",
 			scoreBefore: -300, scoreAfter: -250,
@@ -316,7 +316,7 @@ func TestClassify(t *testing.T) {
 		// opponent blundered into equality, player seizes the resulting equal
 		// position. scoreBefore=50 (equal, already rescued by opponent's blunder),
 		// scoreAfter=50 (maintained, 0% win-prob loss). scoreBeforePrev=-250
-		// → winProb(-250)≈0.269 < 0.40; winProb(50)≈0.562 ≥ 0.40 → losing→equal
+		// → winProb(-250)≈0.349 < 0.40; winProb(50)≈0.531 ≥ 0.40 → losing→equal
 		// swing via 2-ply lookback.
 		{
 			name:        "2-ply lookback rescue from losing via opponent blunder returns Great",

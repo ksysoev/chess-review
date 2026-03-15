@@ -16,8 +16,10 @@ const (
 	// annotation in standard chess notation.
 	Brilliant
 	// Great indicates a critical turning-point move: one that swings the position
-	// from losing to equal/winning, or from equal to clearly winning. These moves
-	// are decisive contributions that change the expected outcome of the game.
+	// from losing to equal/winning, or from equal to clearly winning, while also
+	// keeping the win-probability loss within the Excellent threshold (≤ 2%).
+	// These moves are decisive contributions that change the expected outcome of
+	// the game without throwing away the newly gained advantage.
 	Great
 	// Best indicates the move matches the engine's top choice.
 	Best
@@ -173,7 +175,8 @@ type ClassifyContext struct {
 //	Book       – move is in the ECO opening book (theory)
 //	Brilliant  – sacrifice that is the engine's top choice, improves or maintains
 //	             the position (ScoreAfter >= ScoreBefore), and not already clearly winning (< +2.00)
-//	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning.
+//	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning,
+//	             AND win-probability loss ≤ 2% (excellentWinProbThreshold).
 //	             Checked against both the immediate ScoreBefore (1-ply) and, when
 //	             HasPrev is true, the same player's ScoreBefore from two half-moves
 //	             ago (2-ply lookback) to capture moves that capitalise on an

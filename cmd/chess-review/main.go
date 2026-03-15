@@ -25,7 +25,7 @@ const (
 	tabWriterPadding  = 2
 
 	flagDepth        = "depth"
-	flagDepthDefault = 18
+	flagDepthDefault = chessreview.DefaultDepth
 	flagDepthUsage   = "Stockfish search depth (higher = stronger but slower, default 18)"
 )
 
@@ -209,8 +209,8 @@ func printSummary(s *chessreview.GameSummary) {
 		chessreview.Good,
 		chessreview.Inaccuracy,
 		chessreview.Mistake,
-		chessreview.Miss,
 		chessreview.Blunder,
+		chessreview.Miss,
 	}
 
 	for _, c := range classifications {
