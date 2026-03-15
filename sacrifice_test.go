@@ -3,7 +3,7 @@ package chessreview
 import (
 	"testing"
 
-	"github.com/notnil/chess"
+	"github.com/corentings/chess/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,15 +21,15 @@ func getTestPositions(t *testing.T, fen, uciMove string) (beforePos, afterPos *c
 	beforePos = game.Position()
 
 	for _, m := range beforePos.ValidMoves() {
-		if moveToUCI(m) == uciMove {
-			move = m
+		if moveToUCI(&m) == uciMove {
+			move = &m
 			break
 		}
 	}
 
 	require.NotNil(t, move, "move %q not found in legal moves for FEN %q", uciMove, fen)
 
-	require.NoError(t, game.Move(move))
+	require.NoError(t, game.Move(move, nil))
 
 	afterPos = game.Position()
 

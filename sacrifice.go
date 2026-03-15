@@ -1,6 +1,6 @@
 package chessreview
 
-import "github.com/notnil/chess"
+import "github.com/corentings/chess/v2"
 
 // Centipawn values for each piece type used in sacrifice detection.
 // These are standard material values; King is given a high sentinel value
