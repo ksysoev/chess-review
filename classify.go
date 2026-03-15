@@ -132,28 +132,52 @@ func winProbLoss(scoreBefore, scoreAfter int) float64 {
 	return loss
 }
 
-// Classify returns the move classification given evaluation scores and
-// contextual flags.
-//
-// isBook reports whether the move is part of known opening theory (ECO
-// database). Book moves are returned immediately as Book — they are not judged
-// by engine evaluation.
-//
-// scoreBefore is the centipawn evaluation immediately before the move, from the
-// perspective of the side to move.
-//
-// scoreAfter is the centipawn evaluation immediately after the move, from the
-// perspective of the side that just moved (same reference frame as scoreBefore).
-//
-// isSacrifice reports whether the move gives up material that the opponent can
-// immediately recapture, making it a candidate for a Brilliant annotation.
+// ClassifyContext holds all inputs required to classify a single half-move.
+// Using a struct keeps the Classify signature stable as new contextual fields
+// are added in the future.
+type ClassifyContext struct {
+	// PlayedMove is the UCI move that was actually played (e.g. "e2e4").
+	PlayedMove string
+	// BestMove is the engine's top-recommended move at the configured depth.
+	BestMove string
+	// ScoreBefore is the centipawn evaluation immediately before the move, from
+	// the perspective of the side to move.
+	ScoreBefore int
+	// ScoreAfter is the centipawn evaluation immediately after the move, from
+	// the perspective of the side that just moved (same reference frame as
+	// ScoreBefore — i.e. the engine score negated after the move).
+	ScoreAfter int
+	// ScoreBeforePrev is the same player's ScoreBefore from two half-moves ago
+	// (i.e. the player's own ScoreBefore on their previous turn). It is used to
+	// detect the "capitalise on opponent's blunder" variant of a Great move:
+	// the player was in a losing or equal position on their last turn, but the
+	// opponent's intervening blunder swung the game, and this move seizes the
+	// newly won advantage. Only meaningful when HasPrev is true.
+	ScoreBeforePrev int
+	// HasPrev is true when ScoreBeforePrev is valid. It is false for the first
+	// move of each colour (no prior turn to look back to).
+	HasPrev bool
+	// IsSacrifice is true when the move gives up material that the opponent can
+	// immediately recapture, making it a candidate for a Brilliant annotation.
+	IsSacrifice bool
+	// IsBook is true when the move is part of known opening theory (ECO
+	// database). Book moves are returned immediately as Book — they are not
+	// judged by engine evaluation.
+	IsBook bool
+}
+
+// Classify returns the move classification for the given context.
 //
 // Classification priority (highest to lowest):
 //
 //	Book       – move is in the ECO opening book (theory)
 //	Brilliant  – sacrifice that is the engine's top choice, improves or maintains
-//	             the position (scoreAfter >= scoreBefore), and not already clearly winning (< +2.00)
-//	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning
+//	             the position (ScoreAfter >= ScoreBefore), and not already clearly winning (< +2.00)
+//	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning.
+//	             Checked against both the immediate ScoreBefore (1-ply) and, when
+//	             HasPrev is true, the same player's ScoreBefore from two half-moves
+//	             ago (2-ply lookback) to capture moves that capitalise on an
+//	             opponent blunder.
 //	Best       – played move equals engine best (and not a qualifying sacrifice/turning-point)
 //	Miss       – move throws away a forced mate (cp loss ≥ 20 000); checked before win-prob tiers
 //	             because sentinel-based cp loss can produce misleading win-probability values
@@ -162,45 +186,59 @@ func winProbLoss(scoreBefore, scoreAfter int) float64 {
 //	Inaccuracy – 5–10% win-probability loss
 //	Mistake    – 10–20% win-probability loss
 //	Blunder    – >20%  win-probability loss
-func Classify(scoreBefore, scoreAfter int, playedMove, bestMove string, isSacrifice, isBook bool) Classification {
+func Classify(ctx ClassifyContext) Classification {
 	// Book moves take priority over all engine-based classifications.
-	if isBook {
+	if ctx.IsBook {
 		return Book
 	}
 
-	cpLossVal := scoreBefore - scoreAfter
+	cpLossVal := ctx.ScoreBefore - ctx.ScoreAfter
 	if cpLossVal < 0 {
 		cpLossVal = 0
 	}
 
-	wpLoss := winProbLoss(scoreBefore, scoreAfter)
+	wpLoss := winProbLoss(ctx.ScoreBefore, ctx.ScoreAfter)
 
 	// Brilliant: a material sacrifice that is also the engine's top choice,
-	// improves or maintains the position (scoreAfter >= scoreBefore), and was
+	// improves or maintains the position (ScoreAfter >= ScoreBefore), and was
 	// made when the position was not already clearly winning (< +2.00 / 200 cp).
 	// All four conditions must hold simultaneously:
-	//   1. isSacrifice — the move gives up material the opponent can recapture
-	//   2. playedMove == bestMove — the engine endorses it as the top choice
-	//   3. scoreAfter >= scoreBefore — the position does not worsen after the sacrifice
-	//   4. scoreBefore < brilliantWinningThreshold — not already clearly winning
-	if isSacrifice && playedMove == bestMove && scoreAfter >= scoreBefore && scoreBefore < brilliantWinningThreshold {
+	//   1. IsSacrifice — the move gives up material the opponent can recapture
+	//   2. PlayedMove == BestMove — the engine endorses it as the top choice
+	//   3. ScoreAfter >= ScoreBefore — the position does not worsen after the sacrifice
+	//   4. ScoreBefore < brilliantWinningThreshold — not already clearly winning
+	if ctx.IsSacrifice && ctx.PlayedMove == ctx.BestMove && ctx.ScoreAfter >= ctx.ScoreBefore && ctx.ScoreBefore < brilliantWinningThreshold {
 		return Brilliant
 	}
 
 	// Great: a critical turning-point move that changes the expected outcome.
-	// Case 1: rescues from a losing position into equal or winning territory.
-	// Case 2: converts an equal position into a clearly winning one.
-	wpBefore := winProb(scoreBefore)
-	wpAfter := winProb(scoreAfter)
+	//
+	// 1-ply check: the current position itself crosses a threshold.
+	//   Case A: rescues from a losing position into equal or winning territory.
+	//   Case B: converts an equal position into a clearly winning one.
+	//
+	// 2-ply lookback: the player was in a losing/equal position on their
+	//   previous turn (ScoreBeforePrev), the opponent's intervening move
+	//   happened to be a blunder, and this move seizes the resulting decisive
+	//   advantage. The same threshold checks are applied but against the
+	//   player's position two half-moves ago rather than one.
+	wpBefore := winProb(ctx.ScoreBefore)
+	wpAfter := winProb(ctx.ScoreAfter)
 
 	isGreat := (wpBefore < greatLosingThreshold && wpAfter >= greatLosingThreshold) ||
 		(wpBefore < greatWinningThreshold && wpAfter >= greatWinningThreshold)
+
+	if !isGreat && ctx.HasPrev {
+		wpPrev := winProb(ctx.ScoreBeforePrev)
+		isGreat = (wpPrev < greatLosingThreshold && wpAfter >= greatLosingThreshold) ||
+			(wpPrev < greatWinningThreshold && wpAfter >= greatWinningThreshold)
+	}
 
 	if isGreat && wpLoss <= excellentWinProbThreshold {
 		return Great
 	}
 
-	if playedMove == bestMove {
+	if ctx.PlayedMove == ctx.BestMove {
 		return Best
 	}
 

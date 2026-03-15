@@ -154,6 +154,13 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 		return nil, analyzeErr
 	}
 
+	// prevScoreBefore tracks each colour's own ScoreBefore from their previous
+	// turn. This enables the 2-ply lookback in Classify: when an opponent
+	// blunders, the player who capitalises may deserve a Great annotation even
+	// though their position was already winning at the start of their turn.
+	prevScoreBefore := map[string]int{}
+	hasPrev := map[string]bool{}
+
 	for _, mv := range gi.Moves {
 		scoreBefore := currentScore
 		thisBestMove := bestMove
@@ -180,6 +187,17 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 			mateInAfter = &v
 		}
 
+		classCtx := ClassifyContext{
+			PlayedMove:      mv.UCIMove,
+			BestMove:        thisBestMove,
+			ScoreBefore:     scoreBefore,
+			ScoreAfter:      scoreAfterFromPlayedSide,
+			ScoreBeforePrev: prevScoreBefore[mv.Color],
+			HasPrev:         hasPrev[mv.Color],
+			IsSacrifice:     mv.IsSacrifice,
+			IsBook:          mv.IsBook,
+		}
+
 		reviews = append(reviews, MoveReview{
 			PlayedMove:     mv.UCIMove,
 			BestMove:       thisBestMove,
@@ -188,12 +206,16 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 			ScoreBefore:    scoreBefore,
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
-			Classification: Classify(scoreBefore, scoreAfterFromPlayedSide, mv.UCIMove, thisBestMove, mv.IsSacrifice, mv.IsBook),
+			Classification: Classify(classCtx),
 			IsSacrifice:    mv.IsSacrifice,
 			IsBook:         mv.IsBook,
 			MateInBefore:   mateInBefore,
 			MateInAfter:    mateInAfter,
 		})
+
+		// Update the per-colour lookback state for the next turn of this colour.
+		prevScoreBefore[mv.Color] = scoreBefore
+		hasPrev[mv.Color] = true
 
 		// Carry forward: the opponent's next "before" score is -nextScore from
 		// their perspective (already done via the negation above), but for the

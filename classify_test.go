@@ -16,9 +16,12 @@ func TestClassify(t *testing.T) {
 		bestMove    string
 		scoreBefore int
 		scoreAfter  int
-		isSacrifice bool
-		isBook      bool
-		expected    Classification
+		// 2-ply lookback fields
+		scoreBeforePrev int
+		hasPrev         bool
+		isSacrifice     bool
+		isBook          bool
+		expected        Classification
 	}{
 		// --- Book move cases ---
 		{
@@ -227,7 +230,7 @@ func TestClassify(t *testing.T) {
 			isSacrifice: false,
 			expected:    Excellent,
 		},
-		// --- Great move cases ---
+		// --- Great move cases (1-ply) ---
 		// Rescue from losing (winProb < 0.40) into equal territory.
 		// scoreBefore=-250 → winProb≈0.269 (<0.40); scoreAfter=0 → winProb=0.50 (≥0.40).
 		// win-prob loss = winProb(-250)-winProb(0) < 0 → clamped to 0 → ≤2% → Great.
@@ -292,13 +295,75 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Excellent,
 		},
+		// --- Great move cases (2-ply lookback) ---
+		// ScoreBefore is already winning (≥ greatWinningThreshold), so the 1-ply
+		// Great check does not fire. But two half-moves ago the same player was in
+		// equal territory (< greatWinningThreshold). The player capitalises on the
+		// opponent's intervening blunder → Great via 2-ply lookback.
+		// This replicates move 27 white from the motivating game:
+		//   scoreBefore=411 (already winning), scoreAfter=411 (maintained),
+		//   scoreBeforePrev=108 (equal two half-moves ago).
+		// winProb(108)≈0.567 < 0.60; winProb(411)≈0.737 ≥ 0.60 → equal→winning swing.
+		{
+			name:        "capitalise on opponent blunder via 2-ply lookback returns Great",
+			scoreBefore: 411, scoreAfter: 411,
+			scoreBeforePrev: 108, hasPrev: true,
+			playedMove: "c5e6",
+			bestMove:   "c5e6",
+			expected:   Great,
+		},
+		// 2-ply lookback: rescue variant — player was losing two half-moves ago,
+		// opponent blundered into equality, player seizes the resulting equal
+		// position. scoreBefore=50 (equal, already rescued by opponent's blunder),
+		// scoreAfter=50 (maintained, 0% win-prob loss). scoreBeforePrev=-250
+		// → winProb(-250)≈0.269 < 0.40; winProb(50)≈0.562 ≥ 0.40 → losing→equal
+		// swing via 2-ply lookback.
+		{
+			name:        "2-ply lookback rescue from losing via opponent blunder returns Great",
+			scoreBefore: 50, scoreAfter: 50,
+			scoreBeforePrev: -250, hasPrev: true,
+			playedMove: "d2d4",
+			bestMove:   "e2e4",
+			expected:   Great,
+		},
+		// No lookback when hasPrev is false — should not trigger 2-ply Great even
+		// if scoreBeforePrev would qualify if it were used.
+		{
+			name:        "2-ply lookback suppressed when hasPrev is false",
+			scoreBefore: 411, scoreAfter: 411,
+			scoreBeforePrev: 108, hasPrev: false,
+			playedMove: "c5e6",
+			bestMove:   "c5e6",
+			expected:   Best,
+		},
+		// 2-ply lookback does not fire when the player was already winning two
+		// half-moves ago (scoreBeforePrev ≥ greatWinningThreshold).
+		// winProb(400)≈0.731 ≥ 0.60 → already winning previously → no new swing.
+		{
+			name:        "2-ply lookback does not fire when player was already winning two moves ago",
+			scoreBefore: 500, scoreAfter: 500,
+			scoreBeforePrev: 400, hasPrev: true,
+			playedMove: "e2e4",
+			bestMove:   "e2e4",
+			expected:   Best,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := Classify(tc.scoreBefore, tc.scoreAfter, tc.playedMove, tc.bestMove, tc.isSacrifice, tc.isBook)
+			ctx := ClassifyContext{
+				PlayedMove:      tc.playedMove,
+				BestMove:        tc.bestMove,
+				ScoreBefore:     tc.scoreBefore,
+				ScoreAfter:      tc.scoreAfter,
+				ScoreBeforePrev: tc.scoreBeforePrev,
+				HasPrev:         tc.hasPrev,
+				IsSacrifice:     tc.isSacrifice,
+				IsBook:          tc.isBook,
+			}
+			result := Classify(ctx)
 
 			assert.Equal(t, tc.expected, result)
 		})
