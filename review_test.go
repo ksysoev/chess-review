@@ -822,6 +822,6 @@ func TestReviewer_ReviewGameFull_OpeningInSummary(t *testing.T) {
 	result, err := r.ReviewGameFull(context.Background(), pgn)
 
 	require.NoError(t, err)
-	assert.NotEmpty(t, result.Summary.OpeningCode, "expected non-empty ECO code in summary")
-	assert.NotEmpty(t, result.Summary.OpeningTitle, "expected non-empty opening title in summary")
+	assert.Equal(t, "C50", result.Summary.OpeningCode, "expected ECO code C50 in summary")
+	assert.Equal(t, "Italian Game", result.Summary.OpeningTitle, "expected opening title 'Italian Game' in summary")
 }

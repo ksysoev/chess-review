@@ -326,26 +326,26 @@ func TestParsePGN_BookMoves_NonBookAfterTheory(t *testing.T) {
 	t.Parallel()
 
 	// Scholar's Mate: 1.e4 e5 2.Qh5 Nc6 3.Bc4 Nf6 4.Qxf7#
-	// e4 and e5 are common theory but Qh5 deviates quickly.
+	// e4 (index 0), e5 (index 1), and Qh5 (index 2) are ECO theory
+	// (C20 King's Pawn Game: Wayward Queen Attack). Nc6 (index 3) is the
+	// first deviation — no ECO line continues with Nc6 after Qh5.
 	gi, err := parsePGN(scholarsMate)
 
 	require.NoError(t, err)
+	require.Len(t, gi.Moves, 7)
 
-	// At least the very first move (e4) should be a book move.
-	assert.True(t, gi.Moves[0].IsBook, "e4 should be a book move")
+	// e4, e5, and Qh5 are all recognised opening theory.
+	assert.True(t, gi.Moves[0].IsBook, "e4 (move 0) should be a book move")
+	assert.True(t, gi.Moves[1].IsBook, "e5 (move 1) should be a book move")
+	assert.True(t, gi.Moves[2].IsBook, "Qh5 (move 2) should be a book move (Wayward Queen Attack)")
 
-	// Once we leave theory, moves must NOT be flagged as book.
-	// Check that not every move is a book move (Qh5 is very much not theory).
-	hasNonBook := false
+	// Nc6 (index 3) deviates from theory — must NOT be flagged as book.
+	assert.False(t, gi.Moves[3].IsBook, "Nc6 (move 3) must not be a book move after theory ends")
 
-	for _, mv := range gi.Moves {
-		if !mv.IsBook {
-			hasNonBook = true
-			break
-		}
+	// All subsequent moves must also not be book once theory ends.
+	for i := 4; i < len(gi.Moves); i++ {
+		assert.False(t, gi.Moves[i].IsBook, "move %d (%s) must not be a book move after theory ends", i, gi.Moves[i].UCIMove)
 	}
-
-	assert.True(t, hasNonBook, "expected at least one non-book move in Scholar's Mate game")
 }
 
 func TestParsePGN_OpeningDetected(t *testing.T) {
@@ -354,8 +354,8 @@ func TestParsePGN_OpeningDetected(t *testing.T) {
 	gi, err := parsePGN(italianGamePGN)
 
 	require.NoError(t, err)
-	assert.NotEmpty(t, gi.OpeningCode, "expected non-empty ECO code for Italian Game")
-	assert.NotEmpty(t, gi.OpeningTitle, "expected non-empty opening title for Italian Game")
+	assert.Equal(t, "C50", gi.OpeningCode, "expected ECO code C50 for Italian Game")
+	assert.Equal(t, "Italian Game", gi.OpeningTitle, "expected opening title 'Italian Game'")
 }
 
 func TestParsePGN_NoOpeningForNonStandardGame(t *testing.T) {

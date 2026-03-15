@@ -89,14 +89,15 @@ func parsePGN(pgn string) (gameInfo, error) {
 	// position; custom FEN games are skipped entirely.
 	var book *opening.BookECO
 
-	var prevPossible int
-
 	if strings.HasPrefix(initialFEN, standardStartFEN) {
 		book = opening.NewBookECO()
-		prevPossible = len(book.Possible(moves[:0]))
 	}
 
 	var openingCode, openingTitle string
+
+	// prevOpening tracks the deepest ECO opening matched before the current
+	// move so we can detect when Find advances to a new (deeper) node.
+	var prevOpening *opening.Opening
 
 	infos := make([]moveInfo, 0, len(moves))
 
@@ -114,24 +115,23 @@ func parsePGN(pgn string) (gameInfo, error) {
 		//nolint:mnd // arithmetic: (ply + black-offset) / 2 gives full-move number
 		moveNumber := startMoveNum + (i+startBlack)/2
 
-		// A move is a book move when the number of possible ECO continuations
-		// strictly decreases after playing it: followPath descended into a real
-		// child node. When the move is off-book, followPath stays at the same
-		// node and Possible returns an identical set (same length). Book
-		// detection is skipped entirely for games starting from a custom FEN.
+		// A move is a book move when Find advances to a deeper ECO node after
+		// playing it. Find walks the trie and returns the nearest ancestor with
+		// an opening label; if the move is not in the trie it stays at the same
+		// node and returns the same opening as before, so the pointer comparison
+		// correctly distinguishes on-book from off-book moves.
+		// Book detection is skipped entirely for games starting from a custom FEN.
 		isBook := false
 
 		if book != nil {
-			currPossible := len(book.Possible(moves[:i+1]))
-			isBook = currPossible < prevPossible
-			prevPossible = currPossible
+			currOpening := book.Find(moves[:i+1])
+			isBook = currOpening != prevOpening
+			prevOpening = currOpening
 
 			// Update the opening name to the deepest recognised line.
-			if isBook {
-				if o := book.Find(moves[:i+1]); o != nil {
-					openingCode = o.Code()
-					openingTitle = o.Title()
-				}
+			if isBook && currOpening != nil {
+				openingCode = currOpening.Code()
+				openingTitle = currOpening.Title()
 			}
 		}
 
