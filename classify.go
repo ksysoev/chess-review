@@ -164,7 +164,9 @@ type ClassifyContext struct {
 	// move of each colour (no prior turn to look back to).
 	HasPrev bool
 	// IsSacrifice is true when the move gives up material that the opponent can
-	// immediately recapture, making it a candidate for a Brilliant annotation.
+	// immediately recapture. It is a necessary but not sufficient condition for
+	// a Brilliant annotation: SacrificedPieceType must also be set and must not
+	// be a pawn (pawn sacrifices are excluded from Brilliant).
 	IsSacrifice bool
 	// SacrificedPieceType is the type of the piece that was sacrificed when
 	// IsSacrifice is true, and chess.NoPieceType otherwise. Pawn sacrifices are
@@ -216,13 +218,14 @@ func Classify(ctx ClassifyContext) Classification {
 	// made when the position was not already clearly winning (< +2.00 / 200 cp).
 	// Pawn sacrifices are excluded — they are common strategic motifs (gambits,
 	// pawn levers) rather than spectacular piece sacrifices deserving "!!".
-	// All five conditions must hold simultaneously:
+	// All six conditions must hold simultaneously:
 	//   1. IsSacrifice — the move gives up material the opponent can recapture
 	//   2. PlayedMove == BestMove — the engine endorses it as the top choice
 	//   3. ScoreAfter >= ScoreBefore — the position does not worsen after the sacrifice
 	//   4. ScoreBefore < brilliantWinningThreshold — not already clearly winning
-	//   5. SacrificedPieceType != chess.Pawn — pawn sacrifices are excluded
-	if ctx.IsSacrifice && ctx.PlayedMove == ctx.BestMove && ctx.ScoreAfter >= ctx.ScoreBefore && ctx.ScoreBefore < brilliantWinningThreshold && ctx.SacrificedPieceType != chess.Pawn {
+	//   5. SacrificedPieceType != chess.NoPieceType — piece type must be known
+	//   6. SacrificedPieceType != chess.Pawn — pawn sacrifices are excluded
+	if ctx.IsSacrifice && ctx.PlayedMove == ctx.BestMove && ctx.ScoreAfter >= ctx.ScoreBefore && ctx.ScoreBefore < brilliantWinningThreshold && ctx.SacrificedPieceType != chess.NoPieceType && ctx.SacrificedPieceType != chess.Pawn {
 		return Brilliant
 	}
 

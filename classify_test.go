@@ -131,9 +131,9 @@ func TestClassify(t *testing.T) {
 			expected:   Blunder,
 		},
 		// --- Brilliant move cases ---
-		// All five conditions must hold: isSacrifice, playedMove == bestMove,
+		// All six conditions must hold: isSacrifice, playedMove == bestMove,
 		// scoreAfter >= scoreBefore, scoreBefore < brilliantWinningThreshold,
-		// and sacrificedPieceType != chess.Pawn.
+		// sacrificedPieceType != chess.NoPieceType, and sacrificedPieceType != chess.Pawn.
 
 		// Engine endorses the sacrifice and position is maintained → Brilliant.
 		{
@@ -252,6 +252,17 @@ func TestClassify(t *testing.T) {
 			bestMove:            "b2b4",
 			isSacrifice:         true,
 			sacrificedPieceType: chess.Pawn,
+			expected:            Best,
+		},
+		// NoPieceType sacrifice: IsSacrifice=true but SacrificedPieceType left at zero value → not Brilliant.
+		// This guards against callers that set IsSacrifice without populating SacrificedPieceType.
+		{
+			name:        "sacrifice with NoPieceType is excluded from Brilliant (fail-closed guard)",
+			scoreBefore: 50, scoreAfter: 55,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.NoPieceType,
 			expected:            Best,
 		},
 		// --- Great move cases (1-ply) ---
