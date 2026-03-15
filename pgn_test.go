@@ -295,3 +295,80 @@ func TestParsePGN_PlayerNames(t *testing.T) {
 		})
 	}
 }
+
+// italianGamePGN is the Italian Game opening — a well-known ECO line (C50).
+// All five half-moves (e4, e5, Nf3, Nc6, Bc4) should be tagged as book moves.
+const italianGamePGN = `[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 *`
+
+func TestParsePGN_BookMoves_Detected(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(italianGamePGN)
+
+	require.NoError(t, err)
+	require.Len(t, gi.Moves, 5)
+
+	// All five moves of the Italian Game opening should be flagged as book moves.
+	for i, mv := range gi.Moves {
+		assert.True(t, mv.IsBook, "expected move %d (%s) to be a book move", i, mv.UCIMove)
+	}
+}
+
+func TestParsePGN_BookMoves_NonBookAfterTheory(t *testing.T) {
+	t.Parallel()
+
+	// Scholar's Mate: 1.e4 e5 2.Qh5 Nc6 3.Bc4 Nf6 4.Qxf7#
+	// e4 (index 0), e5 (index 1), and Qh5 (index 2) are ECO theory
+	// (C20 King's Pawn Game: Wayward Queen Attack). Nc6 (index 3) is the
+	// first deviation — no ECO line continues with Nc6 after Qh5.
+	gi, err := parsePGN(scholarsMate)
+
+	require.NoError(t, err)
+	require.Len(t, gi.Moves, 7)
+
+	// e4, e5, and Qh5 are all recognised opening theory.
+	assert.True(t, gi.Moves[0].IsBook, "e4 (move 0) should be a book move")
+	assert.True(t, gi.Moves[1].IsBook, "e5 (move 1) should be a book move")
+	assert.True(t, gi.Moves[2].IsBook, "Qh5 (move 2) should be a book move (Wayward Queen Attack)")
+
+	// Nc6 (index 3) deviates from theory — must NOT be flagged as book.
+	assert.False(t, gi.Moves[3].IsBook, "Nc6 (move 3) must not be a book move after theory ends")
+
+	// All subsequent moves must also not be book once theory ends.
+	for i := 4; i < len(gi.Moves); i++ {
+		assert.False(t, gi.Moves[i].IsBook, "move %d (%s) must not be a book move after theory ends", i, gi.Moves[i].UCIMove)
+	}
+}
+
+func TestParsePGN_OpeningDetected(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(italianGamePGN)
+
+	require.NoError(t, err)
+	assert.Equal(t, "C50", gi.OpeningCode, "expected ECO code C50 for Italian Game")
+	assert.Equal(t, "Italian Game", gi.OpeningTitle, "expected opening title 'Italian Game'")
+}
+
+func TestParsePGN_NoOpeningForNonStandardGame(t *testing.T) {
+	t.Parallel()
+
+	// A game starting from a custom FEN far into the endgame will not match any
+	// ECO line because the opening book only covers standard starting positions.
+	gi, err := parsePGN(promotionPGN)
+
+	require.NoError(t, err)
+	// The promotion game starts from a custom FEN — no opening should be detected.
+	assert.Empty(t, gi.OpeningCode)
+	assert.Empty(t, gi.OpeningTitle)
+	// The single promotion move cannot be a book move.
+	assert.False(t, gi.Moves[0].IsBook)
+}

@@ -141,19 +141,19 @@ func TestReviewer_ReviewGame_TwoMoves(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, reviews, 2)
 
-	// White's e4: played == best → Best
+	// White's e4: ECO book move → Book (book classification takes priority).
 	assert.Equal(t, "e2e4", reviews[0].PlayedMove)
 	assert.Equal(t, "e2e4", reviews[0].BestMove)
 	assert.Equal(t, "white", reviews[0].Color)
 	assert.Equal(t, 1, reviews[0].MoveNumber)
-	assert.Equal(t, Best, reviews[0].Classification)
+	assert.Equal(t, Book, reviews[0].Classification)
 
-	// Black's e5: played == best → Best
+	// Black's e5: ECO book move → Book.
 	assert.Equal(t, "e7e5", reviews[1].PlayedMove)
 	assert.Equal(t, "e7e5", reviews[1].BestMove)
 	assert.Equal(t, "black", reviews[1].Color)
 	assert.Equal(t, 1, reviews[1].MoveNumber)
-	assert.Equal(t, Best, reviews[1].Classification)
+	assert.Equal(t, Book, reviews[1].Classification)
 }
 
 func TestReviewer_ReviewGame_InvalidPGN(t *testing.T) {
@@ -342,23 +342,30 @@ func TestReviewer_ReviewGame_NoBestMove(t *testing.T) {
 func TestReviewer_ReviewGame_MateScore(t *testing.T) {
 	t.Parallel()
 
+	// Use a custom FEN position (not in the ECO book) so that moves are NOT
+	// classified as Book, allowing the Miss classification to be tested.
+	// Position: white rook on a1, kings on e1/e8, white to move from move 10.
+	// The FEN game is off-book, so engine scores drive classification.
 	const pgn = `[Event "Test"]
 [Result "*"]
+[SetUp "1"]
+[FEN "4k3/8/8/8/8/8/8/R3K3 w Q - 0 10"]
 
-1. e4 e5 *`
+10. Ra8+ Ke7 *`
 
 	// call 0 (initial, white to move):  mate-in-1 for white → sentinel +30000,
-	//                                    but best move is d2d4 (not e2e4).
-	// call 1 (after e4, black to move): cp score 0, best=e7e5
-	// call 2 (after e5, white to move): cp score 0, best=d2d4
+	//                                    but best move is a1a8 (Ra8+, not the played move).
+	//                                    We simulate: best is a1a3, played is a1a8.
+	// call 0: mate-in-1, best = a1a3 (not the played a1a8) → White misses the mate.
+	// call 1 (after Ra8+, black to move): cp score 0, best=e8e7
+	// call 2 (after Ke7, white to move):  cp score 0, best=a8a7
 	//
-	// White plays e4 but had a forced mate with d2d4 → delta = -0 - 30000 = -30000
-	// loss = 30000 → Miss (threw away the forced mate).
+	// White plays Ra8+ but had a "forced mate" with a1a3 → Miss.
 	engine := &mockEngine{
 		searchInfos: []stockfish.SearchInfo{
-			makeMateInfo(1), makeBestMoveInfo("d2d4"), // best is d2d4, not e2e4
-			makeDepthInfo(0), makeBestMoveInfo("e7e5"),
-			makeDepthInfo(0), makeBestMoveInfo("d2d4"),
+			makeMateInfo(1), makeBestMoveInfo("a1a3"), // best is a1a3, not a1a8
+			makeDepthInfo(0), makeBestMoveInfo("e8e7"),
+			makeDepthInfo(0), makeBestMoveInfo("a8a7"),
 		},
 	}
 
@@ -369,7 +376,7 @@ func TestReviewer_ReviewGame_MateScore(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, reviews, 2)
 
-	// White played e4 but had a forced mate with d2d4 — classified as Miss.
+	// White played Ra8+ but had a forced mate with a1a3 — classified as Miss.
 	assert.Equal(t, Miss, reviews[0].Classification)
 	assert.Equal(t, mateScoreSentinel, reviews[0].ScoreBefore)
 
@@ -377,7 +384,7 @@ func TestReviewer_ReviewGame_MateScore(t *testing.T) {
 	require.NotNil(t, reviews[0].MateInBefore)
 	assert.Equal(t, 1, *reviews[0].MateInBefore)
 
-	// After e4 the engine reported cp score 0 (no forced mate) so MateInAfter is nil.
+	// After Ra8+ the engine reported cp score 0 (no forced mate) so MateInAfter is nil.
 	assert.Nil(t, reviews[0].MateInAfter)
 
 	// Black's move: no forced mate in the position before black moves.
@@ -493,36 +500,34 @@ func TestReviewer_ReviewGame_MateInAfter(t *testing.T) {
 func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 	t.Parallel()
 
-	// Evans Gambit: 4. b4 is a classic pawn sacrifice — after the move Black's
-	// bishop on c5 can capture on b4, so IsSacrifice is true. With an excellent
-	// engine score (−5 cp) and a pre-move evaluation well below the "already
-	// winning" threshold (50 cp < 300 cp), the move qualifies as Brilliant.
+	// Use a custom FEN to set up a position that is off-book (not in the ECO
+	// database), allowing the Brilliant classification to be exercised.
+	//
+	// Position after 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 (Italian Game) with an extra
+	// pawn twist: we start from a FEN where it's White's turn to play b4 (the
+	// Evans Gambit pawn push) but the game is flagged as a SetUp position so
+	// no ECO book applies.
+	//
+	// FEN: Italian Game position after 3...Bc5, white to move.
+	// rnbqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4
+	// Wait — that has Black's knight on f6, which is not the Italian after 3.Bc4 Bc5.
+	// Italian after 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5: r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4
 	const pgn = `[Event "Test"]
 [Result "*"]
+[SetUp "1"]
+[FEN "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"]
 
-1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 4. b4 *`
+4. b4 *`
 
-	// 7 half-moves → 8 analyzePosition calls (N+1).
-	//   call 0 (initial):   score= 20, best=e2e4
-	//   call 1 (after e4):  score= 30, best=e7e5
-	//   call 2 (after e5):  score= 10, best=g1f3
-	//   call 3 (after Nf3): score= 20, best=b8c6
-	//   call 4 (after Nc6): score= 15, best=f1c4
-	//   call 5 (after Bc4): score= 25, best=f8c5
-	//   call 6 (after Bc5): score= 50, best=b2b4  ← White to move; b4 is engine best
-	//   call 7 (after b4):  score=-45, best=c5b4  ← Black to move; delta = 45−50 = −5
+	// 1 half-move → 2 analyzePosition calls (N+1).
+	//   call 0 (initial, white to move): score=50, best=b2b4  ← b4 is engine best
+	//   call 1 (after b4, black to move): score=-45, best=c5b4 ← Black can take
 	//
 	// For White's b4: scoreBefore=50, scoreAfterFromPlayedSide=45, delta=−5.
-	// isSacrifice=true (Black's bishop can capture), loss=5 ≤ 10, scoreBefore=50 < 300
-	// → Brilliant.
+	// isSacrifice=true (Black's bishop on c5 can capture on b4), loss=5 ≤ 10,
+	// scoreBefore=50 < 300 → Brilliant.
 	engine := &mockEngine{
 		searchInfos: []stockfish.SearchInfo{
-			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
-			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
-			makeDepthInfo(10), makeBestMoveInfo("g1f3"),
-			makeDepthInfo(20), makeBestMoveInfo("b8c6"),
-			makeDepthInfo(15), makeBestMoveInfo("f1c4"),
-			makeDepthInfo(25), makeBestMoveInfo("f8c5"),
 			makeDepthInfo(50), makeBestMoveInfo("b2b4"),
 			makeDepthInfo(-45), makeBestMoveInfo("c5b4"),
 		},
@@ -533,9 +538,9 @@ func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 	reviews, err := r.ReviewGame(context.Background(), pgn)
 
 	require.NoError(t, err)
-	require.Len(t, reviews, 7)
+	require.Len(t, reviews, 1)
 
-	b4 := reviews[6] // White's b4 is the seventh half-move (index 6).
+	b4 := reviews[0] // White's b4 is the only move.
 
 	assert.Equal(t, "b2b4", b4.PlayedMove)
 	assert.Equal(t, "white", b4.Color)
@@ -748,4 +753,75 @@ func TestNormalizeScore(t *testing.T) {
 			assert.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+// TestReviewer_ReviewGame_BookMoves verifies that moves recognised as opening
+// theory are classified as Book in the review output, regardless of the engine
+// score, and that IsBook is propagated onto the MoveReview.
+func TestReviewer_ReviewGame_BookMoves(t *testing.T) {
+	t.Parallel()
+
+	// Italian Game opening — all five moves are ECO book moves.
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 *`
+
+	// 5 moves → 6 analyzePosition calls. Engine scores don't matter for Book
+	// classification, but we still need valid responses for the loop to complete.
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(20), makeBestMoveInfo("g1f3"),
+			makeDepthInfo(25), makeBestMoveInfo("b8c6"),
+			makeDepthInfo(30), makeBestMoveInfo("f1c4"),
+			makeDepthInfo(25), makeBestMoveInfo("d7d6"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 5)
+
+	for i, rv := range reviews {
+		assert.True(t, rv.IsBook, "expected move %d (%s) to have IsBook=true", i, rv.PlayedMove)
+		assert.Equal(t, Book, rv.Classification, "expected move %d (%s) to be classified as Book", i, rv.PlayedMove)
+	}
+}
+
+// TestReviewer_ReviewGameFull_OpeningInSummary verifies that the ECO opening
+// code and title detected from the moves are propagated into the GameSummary.
+func TestReviewer_ReviewGameFull_OpeningInSummary(t *testing.T) {
+	t.Parallel()
+
+	// Italian Game opening.
+	const pgn = `[Event "Test"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 *`
+
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(20), makeBestMoveInfo("g1f3"),
+			makeDepthInfo(25), makeBestMoveInfo("b8c6"),
+			makeDepthInfo(30), makeBestMoveInfo("f1c4"),
+			makeDepthInfo(25), makeBestMoveInfo("d7d6"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	result, err := r.ReviewGameFull(context.Background(), pgn)
+
+	require.NoError(t, err)
+	assert.Equal(t, "C50", result.Summary.OpeningCode, "expected ECO code C50 in summary")
+	assert.Equal(t, "Italian Game", result.Summary.OpeningTitle, "expected opening title 'Italian Game' in summary")
 }

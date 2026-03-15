@@ -4,8 +4,16 @@ package chessreview
 type Classification int
 
 const (
+	// Book indicates the move is part of known opening theory (ECO database).
+	// Book moves are not judged by engine evaluation — they represent memorised
+	// theory and are excluded from accuracy calculations.
+	Book Classification = iota
+	// Brilliant indicates a material sacrifice that leads to an excellent or better
+	// position, provided the position was not already overwhelmingly winning before
+	// the move. Corresponds to the "!!" annotation in standard chess notation.
+	Brilliant
 	// Best indicates the move matches the engine's top choice.
-	Best Classification = iota
+	Best
 	// Excellent indicates a near-optimal move with minimal centipawn loss (0–10 cp).
 	Excellent
 	// Good indicates a solid move with small centipawn loss (11–25 cp).
@@ -18,15 +26,15 @@ const (
 	Blunder
 	// Miss indicates a move that misses an immediate winning tactic (e.g. missed mate).
 	Miss
-	// Brilliant indicates a material sacrifice that leads to an excellent or better
-	// position, provided the position was not already overwhelmingly winning before
-	// the move. Corresponds to the "!!" annotation in standard chess notation.
-	Brilliant
 )
 
 // String returns a human-readable label for the classification.
 func (c Classification) String() string {
 	switch c {
+	case Book:
+		return "Book"
+	case Brilliant:
+		return "Brilliant"
 	case Best:
 		return "Best"
 	case Excellent:
@@ -41,8 +49,6 @@ func (c Classification) String() string {
 		return "Blunder"
 	case Miss:
 		return "Miss"
-	case Brilliant:
-		return "Brilliant"
 	default:
 		return "Unknown"
 	}
@@ -74,6 +80,10 @@ const (
 // Classify returns the move classification given the centipawn delta, the
 // pre-move evaluation, and contextual flags.
 //
+// isBook reports whether the move is part of known opening theory (ECO
+// database). Book moves are returned immediately as Book — they are not judged
+// by engine evaluation.
+//
 // scoreDelta is the change in centipawns from the perspective of the side that
 // just moved: positive means the position improved for that side, negative means
 // the played move cost material/position. We work with the absolute loss value.
@@ -87,6 +97,7 @@ const (
 //
 // Thresholds used for move classification grading:
 //
+//	Book       – move is in the ECO opening book (theory)
 //	Brilliant  – sacrifice with ≤10 cp loss when not already clearly winning
 //	Best       – played move equals engine best (and not a qualifying sacrifice)
 //	Excellent  – 0–10 cp loss
@@ -95,7 +106,12 @@ const (
 //	Mistake    – 101–300 cp loss
 //	Blunder    – > 300 cp loss
 //	Miss       – move throws away a forced mate (sentinel loss ≥ 20000 cp)
-func Classify(scoreDelta, scoreBefore int, playedMove, bestMove string, isSacrifice bool) Classification {
+func Classify(scoreDelta, scoreBefore int, playedMove, bestMove string, isSacrifice, isBook bool) Classification {
+	// Book moves take priority over all engine-based classifications.
+	if isBook {
+		return Book
+	}
+
 	loss := -scoreDelta
 	if loss < 0 {
 		loss = 0

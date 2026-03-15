@@ -163,6 +163,21 @@ func printSummary(s *chessreview.GameSummary) {
 	fmt.Fprintf(w, "Game Summary\t%s\t%s\n", whiteName, blackName)
 	fmt.Fprintln(w, "------------\t-------\t-------")
 
+	var opening string
+
+	switch {
+	case s.OpeningCode != "" && s.OpeningTitle != "":
+		opening = s.OpeningCode + " - " + s.OpeningTitle
+	case s.OpeningCode != "":
+		opening = s.OpeningCode
+	case s.OpeningTitle != "":
+		opening = s.OpeningTitle
+	}
+
+	if opening != "" {
+		fmt.Fprintf(w, "Opening\t%s\t%s\n", opening, opening)
+	}
+
 	fmt.Fprintf(w, "Accuracy\t%s\t%s\n",
 		formatAccuracy(s.White.Accuracy),
 		formatAccuracy(s.Black.Accuracy))
@@ -174,6 +189,7 @@ func printSummary(s *chessreview.GameSummary) {
 	fmt.Fprintln(w, "")
 
 	classifications := []chessreview.Classification{
+		chessreview.Book,
 		chessreview.Brilliant,
 		chessreview.Best,
 		chessreview.Excellent,

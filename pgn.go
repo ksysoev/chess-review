@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/corentings/chess/v2"
+	"github.com/corentings/chess/v2/opening"
 )
 
 // moveInfo holds extracted data for a single half-move (ply).
@@ -18,6 +19,10 @@ type moveInfo struct {
 	// IsSacrifice is true when the move gives up material that the opponent can
 	// immediately recapture, making it a candidate for a Brilliant annotation.
 	IsSacrifice bool
+	// IsBook is true when the move is part of a known ECO opening line.
+	// Book moves are not judged by engine evaluation and are excluded from
+	// accuracy calculations.
+	IsBook bool
 }
 
 // gameInfo holds the parsed moves and the initial position FEN for the game.
@@ -32,6 +37,12 @@ type gameInfo struct {
 	// BlackPlayer is the name of the player with the black pieces, parsed from
 	// the PGN Black tag. Empty string when the tag is absent.
 	BlackPlayer string
+	// OpeningCode is the ECO code of the detected opening (e.g. "C50").
+	// Empty string when no opening was detected.
+	OpeningCode string
+	// OpeningTitle is the full name of the detected opening (e.g. "Italian Game").
+	// Empty string when no opening was detected.
+	OpeningTitle string
 	// Moves is the ordered list of half-moves extracted from the game.
 	Moves []moveInfo
 }
@@ -72,6 +83,22 @@ func parsePGN(pgn string) (gameInfo, error) {
 	whiteName := tagValue(game, "White")
 	blackName := tagValue(game, "Black")
 
+	// Build the ECO opening book once and walk move prefixes to detect which
+	// moves are theory and to identify the deepest known opening line.
+	// Book detection is only meaningful for games that start from the standard
+	// position; custom FEN games are skipped entirely.
+	var book *opening.BookECO
+
+	if strings.HasPrefix(initialFEN, standardStartFEN) {
+		book = opening.NewBookECO()
+	}
+
+	var openingCode, openingTitle string
+
+	// prevOpening tracks the deepest ECO opening matched before the current
+	// move so we can detect when Find advances to a new (deeper) node.
+	var prevOpening *opening.Opening
+
 	infos := make([]moveInfo, 0, len(moves))
 
 	for i, move := range moves {
@@ -88,21 +115,48 @@ func parsePGN(pgn string) (gameInfo, error) {
 		//nolint:mnd // arithmetic: (ply + black-offset) / 2 gives full-move number
 		moveNumber := startMoveNum + (i+startBlack)/2
 
+		// A move is a book move when Find advances to a deeper ECO node after
+		// playing it. Find walks the trie and returns the nearest ancestor with
+		// an opening label; if the move is not in the trie it stays at the same
+		// node and returns the same opening as before, so the pointer comparison
+		// correctly distinguishes on-book from off-book moves.
+		// Book detection is skipped entirely for games starting from a custom FEN.
+		isBook := false
+
+		if book != nil {
+			currOpening := book.Find(moves[:i+1])
+			isBook = currOpening != prevOpening
+			prevOpening = currOpening
+
+			// Update the opening name to the deepest recognised line.
+			if isBook && currOpening != nil {
+				openingCode = currOpening.Code()
+				openingTitle = currOpening.Title()
+			}
+		}
+
 		infos = append(infos, moveInfo{
 			UCIMove:     moveToUCI(move),
 			Color:       color,
 			MoveNumber:  moveNumber,
 			IsSacrifice: detectSacrifice(positions[i], positions[i+1], move),
+			IsBook:      isBook,
 		})
 	}
 
 	return gameInfo{
-		InitialFEN:  initialFEN,
-		WhitePlayer: whiteName,
-		BlackPlayer: blackName,
-		Moves:       infos,
+		InitialFEN:   initialFEN,
+		WhitePlayer:  whiteName,
+		BlackPlayer:  blackName,
+		OpeningCode:  openingCode,
+		OpeningTitle: openingTitle,
+		Moves:        infos,
 	}, nil
 }
+
+// standardStartFEN is the FEN for the standard chess starting position.
+// ECO opening detection is only meaningful when a game begins from this position.
+const standardStartFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
 
 // tagValue returns the value of a PGN tag by name, or an empty string if the
 // tag is absent. The chess.Game.GetTagPair method returns an empty string when missing.

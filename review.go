@@ -40,6 +40,10 @@ type MoveReview struct {
 	// the moved piece's value exceeds what was captured, and the opponent had
 	// at least one legal recapture on the destination square.
 	IsSacrifice bool
+	// IsBook is true when the move is part of a known ECO opening line.
+	// Book moves take priority over engine-based classifications and are
+	// excluded from accuracy calculations.
+	IsBook bool
 	// ScoreBefore is the centipawn evaluation before the move, from the perspective
 	// of the side to move.
 	ScoreBefore int
@@ -131,12 +135,12 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		return nil, err
 	}
 
-	return r.reviewFromGameInfo(ctx, gi)
+	return r.reviewFromGameInfo(ctx, &gi)
 }
 
 // reviewFromGameInfo runs the engine analysis loop over an already-parsed game.
 // It is shared by ReviewGame and ReviewGameFull to avoid duplication.
-func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi gameInfo) ([]MoveReview, error) {
+func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]MoveReview, error) {
 	if err := r.engine.NewGame(); err != nil {
 		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
@@ -184,8 +188,9 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi gameInfo) ([]MoveR
 			ScoreBefore:    scoreBefore,
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
-			Classification: Classify(delta, scoreBefore, mv.UCIMove, thisBestMove, mv.IsSacrifice),
+			Classification: Classify(delta, scoreBefore, mv.UCIMove, thisBestMove, mv.IsSacrifice, mv.IsBook),
 			IsSacrifice:    mv.IsSacrifice,
+			IsBook:         mv.IsBook,
 			MateInBefore:   mateInBefore,
 			MateInAfter:    mateInAfter,
 		})
@@ -330,12 +335,12 @@ func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, 
 		return GameResult{}, err
 	}
 
-	reviews, err := r.reviewFromGameInfo(ctx, gi)
+	reviews, err := r.reviewFromGameInfo(ctx, &gi)
 	if err != nil {
 		return GameResult{}, err
 	}
 
-	summary := Summarize(reviews, gi.WhitePlayer, gi.BlackPlayer)
+	summary := Summarize(reviews, gi.WhitePlayer, gi.BlackPlayer, gi.OpeningCode, gi.OpeningTitle)
 
 	return GameResult{Reviews: reviews, Summary: summary}, nil
 }

@@ -144,7 +144,7 @@ func TestSummarize_PlayerNames(t *testing.T) {
 		{Color: "black", MoveNumber: 1, Classification: Good, ScoreDelta: -15},
 	}
 
-	summary := Summarize(reviews, "Alice", "Bob")
+	summary := Summarize(reviews, "Alice", "Bob", "", "")
 
 	assert.Equal(t, "Alice", summary.WhitePlayer)
 	assert.Equal(t, "Bob", summary.BlackPlayer)
@@ -161,7 +161,7 @@ func TestSummarize_ClassificationCounts(t *testing.T) {
 		{Color: "black", MoveNumber: 2, Classification: Blunder, ScoreDelta: -350},
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	assert.Equal(t, 1, summary.White.ClassificationCounts[Best])
 	assert.Equal(t, 1, summary.White.ClassificationCounts[Brilliant])
@@ -182,7 +182,7 @@ func TestSummarize_AccuracyPerfectPlay(t *testing.T) {
 		{Color: "white", MoveNumber: 3, Classification: Best, ScoreDelta: 0},
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	assert.InDelta(t, 100.0, summary.White.Accuracy, 1.0)
 }
@@ -196,7 +196,7 @@ func TestSummarize_AccuracyBadPlay(t *testing.T) {
 		{Color: "white", MoveNumber: 2, Classification: Blunder, ScoreDelta: -400},
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	assert.Less(t, summary.White.Accuracy, 50.0)
 }
@@ -213,7 +213,7 @@ func TestSummarize_PhaseAccuracy(t *testing.T) {
 		// No endgame moves for white
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	// Opening accuracy should be near 100 (zero CPL).
 	assert.InDelta(t, 100.0, summary.White.PhaseAccuracy[Opening], 1.0)
@@ -236,7 +236,7 @@ func TestSummarize_SentinelExcludedFromCPL(t *testing.T) {
 		{Color: "white", MoveNumber: 3, Classification: Miss, ScoreDelta: -missThreshold},
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	// Accuracy should still be high since the sentinel is excluded.
 	assert.Greater(t, summary.White.Accuracy, 90.0)
@@ -245,7 +245,7 @@ func TestSummarize_SentinelExcludedFromCPL(t *testing.T) {
 func TestSummarize_EmptyReviews(t *testing.T) {
 	t.Parallel()
 
-	summary := Summarize(nil, "X", "Y")
+	summary := Summarize(nil, "X", "Y", "", "")
 
 	assert.Equal(t, "X", summary.WhitePlayer)
 	assert.Equal(t, "Y", summary.BlackPlayer)
@@ -261,10 +261,56 @@ func TestSummarize_GameRatingInRange(t *testing.T) {
 		{Color: "black", MoveNumber: 1, Classification: Blunder, ScoreDelta: -400},
 	}
 
-	summary := Summarize(reviews, "", "")
+	summary := Summarize(reviews, "", "", "", "")
 
 	assert.GreaterOrEqual(t, summary.White.GameRating, gameRatingMin)
 	assert.LessOrEqual(t, summary.White.GameRating, gameRatingMax)
 	assert.GreaterOrEqual(t, summary.Black.GameRating, gameRatingMin)
 	assert.LessOrEqual(t, summary.Black.GameRating, gameRatingMax)
+}
+
+func TestSummarize_BookMovesExcludedFromCPL(t *testing.T) {
+	t.Parallel()
+
+	// Book moves should not contribute to CPL / accuracy, regardless of their
+	// score delta. Without exclusion the blunder-sized delta on the Book move
+	// would collapse accuracy well below 90%.
+	reviews := []MoveReview{
+		{Color: "white", MoveNumber: 1, Classification: Book, ScoreDelta: -400},
+		{Color: "white", MoveNumber: 2, Classification: Best, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 3, Classification: Best, ScoreDelta: 0},
+	}
+
+	summary := Summarize(reviews, "", "", "", "")
+
+	// Only the two Best moves count; accuracy must be near 100.
+	assert.Greater(t, summary.White.Accuracy, 90.0)
+	// Book move must still be counted in ClassificationCounts.
+	assert.Equal(t, 1, summary.White.ClassificationCounts[Book])
+}
+
+func TestSummarize_OpeningFields(t *testing.T) {
+	t.Parallel()
+
+	reviews := []MoveReview{
+		{Color: "white", MoveNumber: 1, Classification: Book, ScoreDelta: 0},
+	}
+
+	summary := Summarize(reviews, "Alice", "Bob", "C50", "Italian Game")
+
+	assert.Equal(t, "C50", summary.OpeningCode)
+	assert.Equal(t, "Italian Game", summary.OpeningTitle)
+}
+
+func TestSummarize_OpeningFieldsEmpty(t *testing.T) {
+	t.Parallel()
+
+	reviews := []MoveReview{
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
+	}
+
+	summary := Summarize(reviews, "", "", "", "")
+
+	assert.Empty(t, summary.OpeningCode)
+	assert.Empty(t, summary.OpeningTitle)
 }
