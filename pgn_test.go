@@ -297,7 +297,7 @@ func TestParsePGN_PlayerNames(t *testing.T) {
 }
 
 // italianGamePGN is the Italian Game opening — a well-known ECO line (C50).
-// All four half-moves (e4, e5, Nf3, Nc6, Bc4) should be tagged as book moves.
+// All five half-moves (e4, e5, Nf3, Nc6, Bc4) should be tagged as book moves.
 const italianGamePGN = `[Event "Test"]
 [Site "?"]
 [Date "????.??.??"]

@@ -163,9 +163,15 @@ func printSummary(s *chessreview.GameSummary) {
 	fmt.Fprintf(w, "Game Summary\t%s\t%s\n", whiteName, blackName)
 	fmt.Fprintln(w, "------------\t-------\t-------")
 
-	opening := s.OpeningTitle
-	if s.OpeningCode != "" && s.OpeningTitle != "" {
+	var opening string
+
+	switch {
+	case s.OpeningCode != "" && s.OpeningTitle != "":
 		opening = s.OpeningCode + " - " + s.OpeningTitle
+	case s.OpeningCode != "":
+		opening = s.OpeningCode
+	case s.OpeningTitle != "":
+		opening = s.OpeningTitle
 	}
 
 	if opening != "" {
