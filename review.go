@@ -142,19 +142,16 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 // It is shared by ReviewGame, ReviewGameFull, ReviewGameStream, and
 // ReviewGameFullStream to avoid duplication.
 //
-// When sink is non-nil each MoveReview is sent to it as soon as it is computed,
-// and the returned slice is always nil. When sink is nil every MoveReview is
-// collected into the returned slice instead (original behaviour used by the
-// non-streaming methods).
+// Every MoveReview is always collected into the returned slice. When sink is
+// non-nil each review is also sent to it as soon as it is computed; the send
+// is wrapped in a select on ctx.Done() so that context cancellation unblocks
+// the producer and returns ctx.Err() instead of blocking indefinitely.
 func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink chan<- MoveReview) ([]MoveReview, error) {
 	if err := r.engine.NewGame(); err != nil {
 		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
 
-	var reviews []MoveReview
-	if sink == nil {
-		reviews = make([]MoveReview, 0, len(gi.Moves))
-	}
+	reviews := make([]MoveReview, 0, len(gi.Moves))
 
 	playedSoFar := make([]string, 0, len(gi.Moves))
 
@@ -223,10 +220,14 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 			MateInAfter:    mateInAfter,
 		}
 
+		reviews = append(reviews, mr)
+
 		if sink != nil {
-			sink <- mr
-		} else {
-			reviews = append(reviews, mr)
+			select {
+			case sink <- mr:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 
 		// Update the per-colour lookback state for the next turn of this colour.
@@ -387,9 +388,13 @@ func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, 
 // to the returned channel as soon as it is computed. The moves channel is closed
 // when all moves have been processed or when an error occurs.
 //
-// Any engine or parse error is sent on the separate error channel, which is
-// closed after at most one value. Callers must drain both channels until they
-// are closed to avoid leaking the background goroutine.
+// Any engine or parse error is sent on the separate error channel (buffered,
+// capacity 1), which is closed after at most one value.
+//
+// Callers must keep receiving from moves (or cancel the context) until it is
+// closed to avoid blocking the background goroutine. Reading from errs is
+// recommended for correctness but is not required to prevent blocking, as the
+// error channel is buffered.
 //
 // PGN games with a custom starting position (SetUp/FEN headers) are fully
 // supported.
@@ -433,10 +438,14 @@ func (r *Reviewer) ReviewGameStream(ctx context.Context, pgn string) (moves <-ch
 // moves have been processed, an aggregated GameSummary is sent on the summary
 // channel and both channels are closed.
 //
-// Any engine or parse error is sent on the separate error channel (capacity 1),
-// which is closed after at most one value. When an error occurs the summary
-// channel is closed without a value. Callers must drain all channels until they
-// are closed to avoid leaking the background goroutine.
+// Any engine or parse error is sent on the separate error channel (buffered,
+// capacity 1), which is closed after at most one value. When an error occurs
+// the summary channel is closed without a value.
+//
+// Callers must keep receiving from moves (or cancel the context) until it is
+// closed to avoid blocking the background goroutine. The errs and summaries
+// channels are buffered (capacity 1) and will not block the producer; reading
+// them is recommended for correctness but is not required to prevent blocking.
 //
 // PGN games with a custom starting position (SetUp/FEN headers) are fully
 // supported.
@@ -471,36 +480,16 @@ func (r *Reviewer) ReviewGameFullStream(ctx context.Context, pgn string) (moves 
 		defer close(errsCh)
 		defer close(summariesCh)
 
-		// Collect reviews into a slice via the sink so we can compute the summary
-		// after streaming. We intercept each review by using a helper channel that
-		// forwards to the caller while also collecting.
-		collected := make([]MoveReview, 0, len(gi.Moves))
-		interceptSink := make(chan MoveReview)
-
-		// Forward goroutine: relay each review to the caller and collect it.
-		done := make(chan struct{})
-
-		go func() {
-			defer close(done)
-
-			for mr := range interceptSink {
-				collected = append(collected, mr)
-				movesCh <- mr
-			}
-		}()
-
-		_, runErr := r.reviewFromGameInfo(ctx, &gi, interceptSink)
-
-		close(interceptSink)
-		<-done // wait for all forwarded items to be received by the caller
-
+		// reviewFromGameInfo streams each review to movesCh and also returns the
+		// full collected slice, which we use to compute the summary afterwards.
+		reviews, runErr := r.reviewFromGameInfo(ctx, &gi, movesCh)
 		if runErr != nil {
 			errsCh <- runErr
 
 			return
 		}
 
-		summary := Summarize(collected, gi.WhitePlayer, gi.BlackPlayer, gi.OpeningCode, gi.OpeningTitle)
+		summary := Summarize(reviews, gi.WhitePlayer, gi.BlackPlayer, gi.OpeningCode, gi.OpeningTitle)
 		summariesCh <- summary
 	}()
 

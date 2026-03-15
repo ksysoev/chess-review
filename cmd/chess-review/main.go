@@ -119,8 +119,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	summary, ok := <-summariesCh
 	if !ok {
-		// Should not happen when errCh was nil, but guard defensively.
-		return nil
+		// errCh carried no error yet the summary channel was closed without a
+		// value — this violates the stream contract and should never happen.
+		return fmt.Errorf("reviewing game: stream closed without a summary")
 	}
 
 	fmt.Fprintln(os.Stdout)
