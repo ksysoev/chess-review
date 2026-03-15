@@ -7,7 +7,7 @@ import (
 
 // numClassifications is the total number of Classification values.
 // Derived from the last iota constant so it stays in sync automatically.
-const numClassifications = int(Brilliant) + 1
+const numClassifications = int(Miss) + 1
 
 // GamePhase represents a named phase of a chess game based on move number.
 type GamePhase int
@@ -76,16 +76,21 @@ type PlayerSummary struct {
 
 // GameSummary holds the aggregated summary for both players in a game.
 type GameSummary struct {
-	WhitePlayer string
-	BlackPlayer string
-	White       PlayerSummary
-	Black       PlayerSummary
+	WhitePlayer  string
+	BlackPlayer  string
+	OpeningCode  string
+	OpeningTitle string
+	White        PlayerSummary
+	Black        PlayerSummary
 }
 
-// Summarize builds a GameSummary from a slice of MoveReviews and player names.
+// Summarize builds a GameSummary from a slice of MoveReviews, player names,
+// and the ECO opening code and title detected from the game's moves.
 // It computes per-color classification counts, overall accuracy, estimated game
 // rating, and per-phase accuracy for each player.
-func Summarize(reviews []MoveReview, whiteName, blackName string) GameSummary {
+// Book moves are excluded from centipawn-loss and accuracy calculations because
+// they represent memorised theory rather than the player's own decisions.
+func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingTitle string) GameSummary {
 	type playerAccum struct {
 		counts [numClassifications]int
 		phases [numPhases]phaseAccum
@@ -114,7 +119,12 @@ func Summarize(reviews []MoveReview, whiteName, blackName string) GameSummary {
 		}
 
 		// Centipawn loss: cap at 0 and exclude mate sentinel values so that
-		// sentinel arithmetic doesn't distort the average.
+		// sentinel arithmetic doesn't distort the average. Also exclude Book
+		// moves since they are theory, not the player's own decisions.
+		if r.Classification == Book {
+			continue
+		}
+
 		loss := cpLoss(r.ScoreDelta)
 		if loss >= 0 {
 			phase := phaseOf(r.MoveNumber)
@@ -126,10 +136,12 @@ func Summarize(reviews []MoveReview, whiteName, blackName string) GameSummary {
 	}
 
 	return GameSummary{
-		WhitePlayer: whiteName,
-		BlackPlayer: blackName,
-		White:       buildPlayerSummary(white.counts, white.phases, white.total),
-		Black:       buildPlayerSummary(black.counts, black.phases, black.total),
+		WhitePlayer:  whiteName,
+		BlackPlayer:  blackName,
+		OpeningCode:  openingCode,
+		OpeningTitle: openingTitle,
+		White:        buildPlayerSummary(white.counts, white.phases, white.total),
+		Black:        buildPlayerSummary(black.counts, black.phases, black.total),
 	}
 }
 

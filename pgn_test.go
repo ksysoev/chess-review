@@ -295,3 +295,80 @@ func TestParsePGN_PlayerNames(t *testing.T) {
 		})
 	}
 }
+
+// italianGamePGN is the Italian Game opening — a well-known ECO line (C50).
+// All four half-moves (e4, e5, Nf3, Nc6, Bc4) should be tagged as book moves.
+const italianGamePGN = `[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 *`
+
+func TestParsePGN_BookMoves_Detected(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(italianGamePGN)
+
+	require.NoError(t, err)
+	require.Len(t, gi.Moves, 5)
+
+	// All five moves of the Italian Game opening should be flagged as book moves.
+	for i, mv := range gi.Moves {
+		assert.True(t, mv.IsBook, "expected move %d (%s) to be a book move", i, mv.UCIMove)
+	}
+}
+
+func TestParsePGN_BookMoves_NonBookAfterTheory(t *testing.T) {
+	t.Parallel()
+
+	// Scholar's Mate: 1.e4 e5 2.Qh5 Nc6 3.Bc4 Nf6 4.Qxf7#
+	// e4 and e5 are common theory but Qh5 deviates quickly.
+	gi, err := parsePGN(scholarsMate)
+
+	require.NoError(t, err)
+
+	// At least the very first move (e4) should be a book move.
+	assert.True(t, gi.Moves[0].IsBook, "e4 should be a book move")
+
+	// Once we leave theory, moves must NOT be flagged as book.
+	// Check that not every move is a book move (Qh5 is very much not theory).
+	hasNonBook := false
+
+	for _, mv := range gi.Moves {
+		if !mv.IsBook {
+			hasNonBook = true
+			break
+		}
+	}
+
+	assert.True(t, hasNonBook, "expected at least one non-book move in Scholar's Mate game")
+}
+
+func TestParsePGN_OpeningDetected(t *testing.T) {
+	t.Parallel()
+
+	gi, err := parsePGN(italianGamePGN)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, gi.OpeningCode, "expected non-empty ECO code for Italian Game")
+	assert.NotEmpty(t, gi.OpeningTitle, "expected non-empty opening title for Italian Game")
+}
+
+func TestParsePGN_NoOpeningForNonStandardGame(t *testing.T) {
+	t.Parallel()
+
+	// A game starting from a custom FEN far into the endgame will not match any
+	// ECO line because the opening book only covers standard starting positions.
+	gi, err := parsePGN(promotionPGN)
+
+	require.NoError(t, err)
+	// The promotion game starts from a custom FEN — no opening should be detected.
+	assert.Empty(t, gi.OpeningCode)
+	assert.Empty(t, gi.OpeningTitle)
+	// The single promotion move cannot be a book move.
+	assert.False(t, gi.Moves[0].IsBook)
+}

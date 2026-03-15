@@ -16,8 +16,37 @@ func TestClassify(t *testing.T) {
 		scoreDelta  int
 		scoreBefore int
 		isSacrifice bool
+		isBook      bool
 		expected    Classification
 	}{
+		// --- Book move cases ---
+		{
+			name:       "book move returns Book regardless of delta",
+			scoreDelta: -50,
+			playedMove: "e2e4",
+			bestMove:   "e2e4",
+			isBook:     true,
+			expected:   Book,
+		},
+		{
+			name:       "book move returns Book even when not best",
+			scoreDelta: -200,
+			playedMove: "d2d4",
+			bestMove:   "e2e4",
+			isBook:     true,
+			expected:   Book,
+		},
+		{
+			name:        "book move returns Book even when sacrifice",
+			scoreDelta:  0,
+			scoreBefore: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			isBook:      true,
+			expected:    Book,
+		},
+		// --- Non-book move cases ---
 		{
 			name:       "best move returns Best",
 			scoreDelta: -50,
@@ -190,7 +219,7 @@ func TestClassify(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := Classify(tc.scoreDelta, tc.scoreBefore, tc.playedMove, tc.bestMove, tc.isSacrifice)
+			result := Classify(tc.scoreDelta, tc.scoreBefore, tc.playedMove, tc.bestMove, tc.isSacrifice, tc.isBook)
 
 			assert.Equal(t, tc.expected, result)
 		})
@@ -204,6 +233,8 @@ func TestClassificationString(t *testing.T) {
 		expected       string
 		classification Classification
 	}{
+		{expected: "Book", classification: Book},
+		{expected: "Brilliant", classification: Brilliant},
 		{expected: "Best", classification: Best},
 		{expected: "Excellent", classification: Excellent},
 		{expected: "Good", classification: Good},
@@ -211,7 +242,6 @@ func TestClassificationString(t *testing.T) {
 		{expected: "Mistake", classification: Mistake},
 		{expected: "Blunder", classification: Blunder},
 		{expected: "Miss", classification: Miss},
-		{expected: "Brilliant", classification: Brilliant},
 		{expected: "Unknown", classification: Classification(99)},
 	}
 
