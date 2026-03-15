@@ -21,6 +21,10 @@ const (
 	Endgame
 )
 
+// numPhases is the total number of GamePhase values.
+// Derived from the last iota constant so it stays in sync automatically.
+const numPhases = int(Endgame) + 1
+
 // phaseOpeningMax is the last full-move number considered to be the opening.
 const phaseOpeningMax = 10
 
@@ -62,7 +66,7 @@ type PlayerSummary struct {
 	// PhaseAccuracy holds accuracy percentages for each game phase.
 	// Index with a GamePhase constant (e.g. PhaseAccuracy[Opening]).
 	// A value of math.NaN() means the player had no moves in that phase.
-	PhaseAccuracy [3]float64
+	PhaseAccuracy [numPhases]float64
 	// Accuracy is the overall accuracy percentage (0–100), computed using the
 	// chess.com formula from the player's average centipawn loss.
 	Accuracy float64
@@ -84,7 +88,7 @@ type GameSummary struct {
 func Summarize(reviews []MoveReview, whiteName, blackName string) GameSummary {
 	type playerAccum struct {
 		counts [numClassifications]int
-		phases [3]phaseAccum
+		phases [numPhases]phaseAccum
 		total  phaseAccum
 	}
 
@@ -138,10 +142,10 @@ type phaseAccum struct {
 // buildPlayerSummary assembles a PlayerSummary from accumulated data.
 func buildPlayerSummary(
 	counts [numClassifications]int,
-	phases [3]phaseAccum,
+	phases [numPhases]phaseAccum,
 	total phaseAccum,
 ) PlayerSummary {
-	var phaseAcc [3]float64
+	var phaseAcc [numPhases]float64
 
 	for i := range phases {
 		if phases[i].count == 0 {

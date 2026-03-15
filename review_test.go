@@ -91,6 +91,24 @@ func makeBestMoveInfo(bestMove string) stockfish.SearchInfo {
 	}
 }
 
+// makeBoundInfo returns a non-bestmove SearchInfo with the given centipawn score
+// and an explicit score bound (e.g. ScoreBoundLower or ScoreBoundUpper).
+func makeBoundInfo(score int, bound stockfish.ScoreBound) stockfish.SearchInfo {
+	return stockfish.SearchInfo{
+		Score: stockfish.Score{Value: score, Type: stockfish.ScoreTypeCentipawns, Bound: bound},
+		Depth: 1,
+	}
+}
+
+// makeExactInfo returns a non-bestmove SearchInfo with an exact centipawn score
+// (ScoreBoundExact, which is the zero value / empty string).
+func makeExactInfo(score int) stockfish.SearchInfo {
+	return stockfish.SearchInfo{
+		Score: stockfish.Score{Value: score, Type: stockfish.ScoreTypeCentipawns, Bound: stockfish.ScoreBoundExact},
+		Depth: 1,
+	}
+}
+
 func TestReviewer_ReviewGame_TwoMoves(t *testing.T) {
 	t.Parallel()
 
@@ -523,6 +541,168 @@ func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 	assert.Equal(t, "white", b4.Color)
 	assert.True(t, b4.IsSacrifice)
 	assert.Equal(t, Brilliant, b4.Classification)
+}
+
+// TestReviewer_AnalyzePosition_PrefersExactOverBound verifies that when the
+// engine emits a mix of bound scores followed by an exact score, analyzePosition
+// returns the exact score rather than the last-seen bound score.
+func TestReviewer_AnalyzePosition_PrefersExactOverBound(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	// analyzePosition is called 3 times (N+1 for 2 moves).
+	//
+	// call 0 (initial position):
+	//   - lowerbound score 80  (should be ignored in favour of exact)
+	//   - exact score 20       (this is what we expect back)
+	//   - bestmove e2e4
+	// call 1 (after e4):  exact 30, bestmove e7e5
+	// call 2 (after e5):  exact 10, bestmove d2d4
+	//
+	// If the exact-preference logic is working, white's ScoreBefore == 20 (not 80)
+	// and the delta for white's e4 is -30 - 20 = … wait, scoreAfter = -nextScore.
+	// nextScore (call 1) = 30, so scoreAfterFromPlayedSide = -30.
+	// delta = -30 - 20 = -50 → Good classification.
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeBoundInfo(80, stockfish.ScoreBoundLower), // should be overridden
+			makeExactInfo(20), // exact — must be preferred
+			makeBestMoveInfo("e2e4"),
+			makeExactInfo(30), makeBestMoveInfo("e7e5"),
+			makeExactInfo(10), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	// The mock dispatches batchSize=2 items per call, so we need to override
+	// batchSize for this test by using a variable-batch mock. Instead, we embed
+	// the three info lines for call 0 into the searchInfos and set batchSize=3
+	// for call 0 only.  The standard mockEngine dispatches a fixed batchSize=2,
+	// so we use a custom sub-test engine that sends all items at once per call.
+	batches := [][]stockfish.SearchInfo{
+		{makeBoundInfo(80, stockfish.ScoreBoundLower), makeExactInfo(20), makeBestMoveInfo("e2e4")},
+		{makeExactInfo(30), makeBestMoveInfo("e7e5")},
+		{makeExactInfo(10), makeBestMoveInfo("d2d4")},
+	}
+
+	_ = engine // discard the fixed-batch engine
+
+	batchEngine := &batchMockEngine{batches: batches}
+	r := &Reviewer{engine: batchEngine, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 2)
+
+	// White's move: scoreBefore must be the exact value (20), not the lowerbound (80).
+	assert.Equal(t, 20, reviews[0].ScoreBefore)
+}
+
+// batchMockEngine is a test double that serves pre-defined per-call batches of
+// SearchInfo values, allowing variable batch sizes between analyzePosition calls.
+type batchMockEngine struct {
+	newGameErr error
+	batches    [][]stockfish.SearchInfo
+	callCount  int
+}
+
+func (b *batchMockEngine) NewGame() error { return b.newGameErr }
+
+func (b *batchMockEngine) SetPosition(_ stockfish.Position) error { return nil }
+
+func (b *batchMockEngine) Go(_ context.Context, _ *stockfish.SearchParams) (<-chan stockfish.SearchInfo, error) {
+	if b.callCount >= len(b.batches) {
+		ch := make(chan stockfish.SearchInfo)
+		close(ch)
+
+		return ch, nil
+	}
+
+	batch := b.batches[b.callCount]
+	b.callCount++
+
+	ch := make(chan stockfish.SearchInfo, len(batch))
+
+	for i := range batch {
+		ch <- batch[i]
+	}
+
+	close(ch)
+
+	return ch, nil
+}
+
+func (b *batchMockEngine) Apply(_ ...stockfish.Option) error { return nil }
+
+func (b *batchMockEngine) Close() error { return nil }
+
+// TestReviewer_ReviewGameFull_PlayerNames verifies that player names parsed from
+// PGN White/Black headers are propagated into GameResult.Summary.
+func TestReviewer_ReviewGameFull_PlayerNames(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[White "Magnus"]
+[Black "Hikaru"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	result, err := r.ReviewGameFull(context.Background(), pgn)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Magnus", result.Summary.WhitePlayer)
+	assert.Equal(t, "Hikaru", result.Summary.BlackPlayer)
+}
+
+// TestReviewer_ReviewGameFull_ReviewsMatchReviewGame confirms that the Reviews
+// slice returned by ReviewGameFull is identical to what ReviewGame returns for
+// the same PGN and engine responses.
+func TestReviewer_ReviewGameFull_ReviewsMatchReviewGame(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	makeInfos := func() []stockfish.SearchInfo {
+		return []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		}
+	}
+
+	engineFull := &mockEngine{searchInfos: makeInfos()}
+	engineGame := &mockEngine{searchInfos: makeInfos()}
+
+	rFull := &Reviewer{engine: engineFull, cfg: defaultConfig()}
+	rGame := &Reviewer{engine: engineGame, cfg: defaultConfig()}
+
+	result, err := rFull.ReviewGameFull(context.Background(), pgn)
+	require.NoError(t, err)
+
+	reviews, err := rGame.ReviewGame(context.Background(), pgn)
+	require.NoError(t, err)
+
+	require.Equal(t, reviews, result.Reviews)
 }
 
 func TestNormalizeScore(t *testing.T) {
