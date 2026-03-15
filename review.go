@@ -226,7 +226,7 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 			select {
 			case sink <- mr:
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return reviews, ctx.Err()
 			}
 		}
 
@@ -388,8 +388,10 @@ func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, 
 // to the returned channel as soon as it is computed. The moves channel is closed
 // when all moves have been processed or when an error occurs.
 //
-// Any engine or parse error is sent on the separate error channel (buffered,
-// capacity 1), which is closed after at most one value.
+// Any engine, parse, or context-cancellation error is sent on the separate error
+// channel (buffered, capacity 1), which is closed after at most one value.
+// In particular, if the caller cancels the context while a move is being sent,
+// ctx.Err() is delivered on errs.
 //
 // Callers must keep receiving from moves (or cancel the context) until it is
 // closed to avoid blocking the background goroutine. Reading from errs is
@@ -436,11 +438,13 @@ func (r *Reviewer) ReviewGameStream(ctx context.Context, pgn string) (moves <-ch
 // ReviewGameFullStream analyses the provided PGN string and streams each
 // MoveReview to the returned moves channel as soon as it is computed. Once all
 // moves have been processed, an aggregated GameSummary is sent on the summary
-// channel and both channels are closed.
+// channel and all three channels are closed.
 //
-// Any engine or parse error is sent on the separate error channel (buffered,
-// capacity 1), which is closed after at most one value. When an error occurs
-// the summary channel is closed without a value.
+// Any engine, parse, or context-cancellation error is sent on the separate error
+// channel (buffered, capacity 1), which is closed after at most one value.
+// In particular, if the caller cancels the context while a move is being sent,
+// ctx.Err() is delivered on errs. When an error occurs the summary channel is
+// closed without a value.
 //
 // Callers must keep receiving from moves (or cancel the context) until it is
 // closed to avoid blocking the background goroutine. The errs and summaries
