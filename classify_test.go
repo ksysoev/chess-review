@@ -125,23 +125,44 @@ func TestClassify(t *testing.T) {
 			expected:   Blunder,
 		},
 		// --- Brilliant move cases ---
-		// Equal position, sacrifice, zero loss → Brilliant.
+		// All four conditions must hold: isSacrifice, playedMove == bestMove,
+		// scoreAfter >= scoreBefore, and scoreBefore < brilliantWinningThreshold.
+
+		// Engine endorses the sacrifice and position is maintained → Brilliant.
 		{
-			name:        "sacrifice with zero loss in equal position returns Brilliant",
+			name:        "sacrifice that is the best move with maintained score returns Brilliant",
 			scoreBefore: 50, scoreAfter: 50,
-			playedMove:  "d2d4",
+			playedMove:  "e2e4",
 			bestMove:    "e2e4",
 			isSacrifice: true,
 			expected:    Brilliant,
 		},
-		// scoreBefore=50, scoreAfter=35 → winProb(50)≈0.512, winProb(35)≈0.509 → loss≈0.4% < 2% → Brilliant.
+		// Engine endorses and position improves after sacrifice → Brilliant.
 		{
-			name:        "sacrifice with tiny win-prob loss returns Brilliant",
-			scoreBefore: 50, scoreAfter: 35,
-			playedMove:  "d2d4",
+			name:        "sacrifice that is the best move with improved score returns Brilliant",
+			scoreBefore: 50, scoreAfter: 80,
+			playedMove:  "e2e4",
 			bestMove:    "e2e4",
 			isSacrifice: true,
 			expected:    Brilliant,
+		},
+		// Sacrifice is the engine best but position worsens → falls through to Best.
+		{
+			name:        "sacrifice that is engine best but worsens position returns Best not Brilliant",
+			scoreBefore: 50, scoreAfter: 35,
+			playedMove:  "e2e4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Best,
+		},
+		// Sacrifice with small cp loss, NOT the engine best → falls through to Excellent.
+		{
+			name:        "sacrifice not the best move returns Excellent not Brilliant",
+			scoreBefore: 50, scoreAfter: 50,
+			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Excellent,
 		},
 		// Sacrifice that is also the engine best → Brilliant takes priority over Best.
 		{
@@ -152,9 +173,9 @@ func TestClassify(t *testing.T) {
 			isSacrifice: true,
 			expected:    Brilliant,
 		},
-		// scoreBefore=50, scoreAfter=-60 → winProb(50)≈0.531, winProb(-60)≈0.463 → loss≈6.8% > 2% → falls to Inaccuracy.
+		// Sacrifice with large loss, not best → Inaccuracy (unchanged from before).
 		{
-			name:        "sacrifice with >2% win-prob loss falls through to Inaccuracy (not Brilliant)",
+			name:        "sacrifice with large win-prob loss falls through to Inaccuracy (not Brilliant)",
 			scoreBefore: 50, scoreAfter: -60,
 			playedMove:  "d2d4",
 			bestMove:    "e2e4",
@@ -226,11 +247,21 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Great,
 		},
-		// Sacrifice AND a turning-point: Brilliant takes priority when scoreBefore < 200 cp.
+		// Sacrifice AND a turning-point, but NOT the engine's best move → Great takes priority
+		// (Brilliant requires playedMove == bestMove; here they differ).
 		{
-			name:        "sacrifice in equal position takes Brilliant priority over Great",
+			name:        "sacrifice turning-point without being best move returns Great not Brilliant",
 			scoreBefore: 50, scoreAfter: 400,
 			playedMove:  "d2d4",
+			bestMove:    "e2e4",
+			isSacrifice: true,
+			expected:    Great,
+		},
+		// Sacrifice, turning-point, AND the engine's best move → Brilliant takes priority over Great.
+		{
+			name:        "sacrifice turning-point that is also best move returns Brilliant over Great",
+			scoreBefore: 50, scoreAfter: 400,
+			playedMove:  "e2e4",
 			bestMove:    "e2e4",
 			isSacrifice: true,
 			expected:    Brilliant,

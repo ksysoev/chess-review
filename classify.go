@@ -10,9 +10,10 @@ const (
 	// Book moves are not judged by engine evaluation — they represent memorised
 	// theory and are excluded from accuracy calculations.
 	Book Classification = iota
-	// Brilliant indicates a material sacrifice that leads to an excellent or better
-	// position, provided the position was not already clearly winning before
-	// the move. Corresponds to the "!!" annotation in standard chess notation.
+	// Brilliant indicates a material sacrifice that is the engine's top choice,
+	// improves or maintains the position after the sacrifice, and was made when
+	// the position was not already clearly winning. Corresponds to the "!!"
+	// annotation in standard chess notation.
 	Brilliant
 	// Great indicates a critical turning-point move: one that swings the position
 	// from losing to equal/winning, or from equal to clearly winning. These moves
@@ -147,7 +148,8 @@ func winProbLoss(scoreBefore, scoreAfter int) float64 {
 // Classification priority (highest to lowest):
 //
 //	Book       – move is in the ECO opening book (theory)
-//	Brilliant  – sacrifice with ≤2% win-prob loss when not already clearly winning (< +2.00)
+//	Brilliant  – sacrifice that is the engine's top choice, improves or maintains
+//	             the position (scoreAfter >= scoreBefore), and not already clearly winning (< +2.00)
 //	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning
 //	Best       – played move equals engine best (and not a qualifying sacrifice/turning-point)
 //	Excellent  – 0–2%  win-probability loss
@@ -169,10 +171,15 @@ func Classify(scoreBefore, scoreAfter int, playedMove, bestMove string, isSacrif
 
 	wpLoss := winProbLoss(scoreBefore, scoreAfter)
 
-	// Brilliant: a sacrifice that keeps the win-probability loss in the
-	// excellent range, but only when the position was not already clearly
-	// winning beforehand (< +2.00 / 200 cp).
-	if isSacrifice && wpLoss <= excellentWinProbThreshold && scoreBefore < brilliantWinningThreshold {
+	// Brilliant: a material sacrifice that is also the engine's top choice,
+	// improves or maintains the position (scoreAfter >= scoreBefore), and was
+	// made when the position was not already clearly winning (< +2.00 / 200 cp).
+	// All four conditions must hold simultaneously:
+	//   1. isSacrifice — the move gives up material the opponent can recapture
+	//   2. playedMove == bestMove — the engine endorses it as the top choice
+	//   3. scoreAfter >= scoreBefore — the position does not worsen after the sacrifice
+	//   4. scoreBefore < brilliantWinningThreshold — not already clearly winning
+	if isSacrifice && playedMove == bestMove && scoreAfter >= scoreBefore && scoreBefore < brilliantWinningThreshold {
 		return Brilliant
 	}
 

@@ -521,15 +521,16 @@ func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 
 	// 1 half-move → 2 analyzePosition calls (N+1).
 	//   call 0 (initial, white to move): score=50, best=b2b4  ← b4 is engine best
-	//   call 1 (after b4, black to move): score=-45, best=c5b4 ← Black can take
+	//   call 1 (after b4, black to move): score=-55, best=c5b4 ← Black can take
 	//
-	// For White's b4: scoreBefore=50, scoreAfterFromPlayedSide=45, delta=−5.
-	// isSacrifice=true (Black's bishop on c5 can capture on b4), loss=5 ≤ 10,
-	// scoreBefore=50 < 300 → Brilliant.
+	// For White's b4: scoreBefore=50, scoreAfterFromPlayedSide=55 (negated), delta=+5.
+	// isSacrifice=true (Black's bishop on c5 can capture on b4),
+	// playedMove==bestMove (both b2b4), scoreAfter(55) >= scoreBefore(50),
+	// scoreBefore(50) < brilliantWinningThreshold(200) → Brilliant.
 	engine := &mockEngine{
 		searchInfos: []stockfish.SearchInfo{
 			makeDepthInfo(50), makeBestMoveInfo("b2b4"),
-			makeDepthInfo(-45), makeBestMoveInfo("c5b4"),
+			makeDepthInfo(-55), makeBestMoveInfo("c5b4"),
 		},
 	}
 
