@@ -188,7 +188,7 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 			ScoreBefore:    scoreBefore,
 			ScoreAfter:     scoreAfterFromPlayedSide,
 			ScoreDelta:     delta,
-			Classification: Classify(delta, scoreBefore, mv.UCIMove, thisBestMove, mv.IsSacrifice, mv.IsBook),
+			Classification: Classify(scoreBefore, scoreAfterFromPlayedSide, mv.UCIMove, thisBestMove, mv.IsSacrifice, mv.IsBook),
 			IsSacrifice:    mv.IsSacrifice,
 			IsBook:         mv.IsBook,
 			MateInBefore:   mateInBefore,
