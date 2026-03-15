@@ -135,17 +135,27 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		return nil, err
 	}
 
-	return r.reviewFromGameInfo(ctx, &gi)
+	return r.reviewFromGameInfo(ctx, &gi, nil)
 }
 
 // reviewFromGameInfo runs the engine analysis loop over an already-parsed game.
-// It is shared by ReviewGame and ReviewGameFull to avoid duplication.
-func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]MoveReview, error) {
+// It is shared by ReviewGame, ReviewGameFull, ReviewGameStream, and
+// ReviewGameFullStream to avoid duplication.
+//
+// When sink is non-nil each MoveReview is sent to it as soon as it is computed,
+// and the returned slice is always nil. When sink is nil every MoveReview is
+// collected into the returned slice instead (original behaviour used by the
+// non-streaming methods).
+func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink chan<- MoveReview) ([]MoveReview, error) {
 	if err := r.engine.NewGame(); err != nil {
 		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
 
-	reviews := make([]MoveReview, 0, len(gi.Moves))
+	var reviews []MoveReview
+	if sink == nil {
+		reviews = make([]MoveReview, 0, len(gi.Moves))
+	}
+
 	playedSoFar := make([]string, 0, len(gi.Moves))
 
 	// Evaluate the initial position once before the loop.
@@ -198,7 +208,7 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 			IsBook:          mv.IsBook,
 		}
 
-		reviews = append(reviews, MoveReview{
+		mr := MoveReview{
 			PlayedMove:     mv.UCIMove,
 			BestMove:       thisBestMove,
 			Color:          mv.Color,
@@ -211,7 +221,13 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo) ([]Move
 			IsBook:         mv.IsBook,
 			MateInBefore:   mateInBefore,
 			MateInAfter:    mateInAfter,
-		})
+		}
+
+		if sink != nil {
+			sink <- mr
+		} else {
+			reviews = append(reviews, mr)
+		}
 
 		// Update the per-colour lookback state for the next turn of this colour.
 		prevScoreBefore[mv.Color] = scoreBefore
@@ -357,7 +373,7 @@ func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, 
 		return GameResult{}, err
 	}
 
-	reviews, err := r.reviewFromGameInfo(ctx, &gi)
+	reviews, err := r.reviewFromGameInfo(ctx, &gi, nil)
 	if err != nil {
 		return GameResult{}, err
 	}
@@ -365,4 +381,128 @@ func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, 
 	summary := Summarize(reviews, gi.WhitePlayer, gi.BlackPlayer, gi.OpeningCode, gi.OpeningTitle)
 
 	return GameResult{Reviews: reviews, Summary: summary}, nil
+}
+
+// ReviewGameStream analyses the provided PGN string and streams each MoveReview
+// to the returned channel as soon as it is computed. The moves channel is closed
+// when all moves have been processed or when an error occurs.
+//
+// Any engine or parse error is sent on the separate error channel, which is
+// closed after at most one value. Callers must drain both channels until they
+// are closed to avoid leaking the background goroutine.
+//
+// PGN games with a custom starting position (SetUp/FEN headers) are fully
+// supported.
+func (r *Reviewer) ReviewGameStream(ctx context.Context, pgn string) (moves <-chan MoveReview, errs <-chan error) {
+	movesCh := make(chan MoveReview)
+	errsCh := make(chan error, 1)
+
+	if r.engine == nil {
+		errsCh <- &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
+
+		close(errsCh)
+		close(movesCh)
+
+		return movesCh, errsCh
+	}
+
+	gi, err := parsePGN(pgn)
+	if err != nil {
+		errsCh <- err
+
+		close(errsCh)
+		close(movesCh)
+
+		return movesCh, errsCh
+	}
+
+	go func() {
+		defer close(movesCh)
+		defer close(errsCh)
+
+		if _, runErr := r.reviewFromGameInfo(ctx, &gi, movesCh); runErr != nil {
+			errsCh <- runErr
+		}
+	}()
+
+	return movesCh, errsCh
+}
+
+// ReviewGameFullStream analyses the provided PGN string and streams each
+// MoveReview to the returned moves channel as soon as it is computed. Once all
+// moves have been processed, an aggregated GameSummary is sent on the summary
+// channel and both channels are closed.
+//
+// Any engine or parse error is sent on the separate error channel (capacity 1),
+// which is closed after at most one value. When an error occurs the summary
+// channel is closed without a value. Callers must drain all channels until they
+// are closed to avoid leaking the background goroutine.
+//
+// PGN games with a custom starting position (SetUp/FEN headers) are fully
+// supported.
+func (r *Reviewer) ReviewGameFullStream(ctx context.Context, pgn string) (moves <-chan MoveReview, errs <-chan error, summaries <-chan GameSummary) {
+	movesCh := make(chan MoveReview)
+	errsCh := make(chan error, 1)
+	summariesCh := make(chan GameSummary, 1)
+
+	if r.engine == nil {
+		errsCh <- &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
+
+		close(errsCh)
+		close(movesCh)
+		close(summariesCh)
+
+		return movesCh, errsCh, summariesCh
+	}
+
+	gi, err := parsePGN(pgn)
+	if err != nil {
+		errsCh <- err
+
+		close(errsCh)
+		close(movesCh)
+		close(summariesCh)
+
+		return movesCh, errsCh, summariesCh
+	}
+
+	go func() {
+		defer close(movesCh)
+		defer close(errsCh)
+		defer close(summariesCh)
+
+		// Collect reviews into a slice via the sink so we can compute the summary
+		// after streaming. We intercept each review by using a helper channel that
+		// forwards to the caller while also collecting.
+		collected := make([]MoveReview, 0, len(gi.Moves))
+		interceptSink := make(chan MoveReview)
+
+		// Forward goroutine: relay each review to the caller and collect it.
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			for mr := range interceptSink {
+				collected = append(collected, mr)
+				movesCh <- mr
+			}
+		}()
+
+		_, runErr := r.reviewFromGameInfo(ctx, &gi, interceptSink)
+
+		close(interceptSink)
+		<-done // wait for all forwarded items to be received by the caller
+
+		if runErr != nil {
+			errsCh <- runErr
+
+			return
+		}
+
+		summary := Summarize(collected, gi.WhitePlayer, gi.BlackPlayer, gi.OpeningCode, gi.OpeningTitle)
+		summariesCh <- summary
+	}()
+
+	return movesCh, errsCh, summariesCh
 }

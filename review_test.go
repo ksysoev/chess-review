@@ -826,3 +826,298 @@ func TestReviewer_ReviewGameFull_OpeningInSummary(t *testing.T) {
 	assert.Equal(t, "C50", result.Summary.OpeningCode, "expected ECO code C50 in summary")
 	assert.Equal(t, "Italian Game", result.Summary.OpeningTitle, "expected opening title 'Italian Game' in summary")
 }
+
+// TestReviewer_ReviewGameStream_TwoMoves verifies that ReviewGameStream emits
+// each MoveReview as soon as it is computed and that the moves channel is
+// closed with no error after all moves are processed.
+func TestReviewer_ReviewGameStream_TwoMoves(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh := r.ReviewGameStream(context.Background(), pgn)
+
+	var reviews []MoveReview
+
+	for mr := range movesCh {
+		reviews = append(reviews, mr)
+	}
+
+	// Error channel must be closed with no error.
+	err, ok := <-errCh
+	assert.False(t, ok, "error channel should be closed")
+	assert.NoError(t, err)
+
+	require.Len(t, reviews, 2)
+
+	assert.Equal(t, "e2e4", reviews[0].PlayedMove)
+	assert.Equal(t, "white", reviews[0].Color)
+	assert.Equal(t, Book, reviews[0].Classification)
+
+	assert.Equal(t, "e7e5", reviews[1].PlayedMove)
+	assert.Equal(t, "black", reviews[1].Color)
+	assert.Equal(t, Book, reviews[1].Classification)
+}
+
+// TestReviewer_ReviewGameStream_InvalidPGN verifies that ReviewGameStream
+// sends an ErrInvalidPGN on the error channel and closes the moves channel
+// immediately when given invalid PGN.
+func TestReviewer_ReviewGameStream_InvalidPGN(t *testing.T) {
+	t.Parallel()
+
+	engine := &mockEngine{}
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh := r.ReviewGameStream(context.Background(), "not valid pgn!!!")
+
+	// Moves channel should be closed immediately.
+	_, ok := <-movesCh
+	assert.False(t, ok, "moves channel should be closed on parse error")
+
+	err, ok := <-errCh
+	require.True(t, ok, "error channel should carry the parse error")
+	require.Error(t, err)
+
+	var pgnErr *ErrInvalidPGN
+
+	assert.ErrorAs(t, err, &pgnErr)
+}
+
+// TestReviewer_ReviewGameStream_EngineError verifies that ReviewGameStream
+// sends an ErrEngineFailure on the error channel when the engine fails during
+// analysis.
+func TestReviewer_ReviewGameStream_EngineError(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{goErr: errors.New("engine exploded")}
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh := r.ReviewGameStream(context.Background(), pgn)
+
+	// Drain the moves channel.
+	for range movesCh {
+	}
+
+	err, ok := <-errCh
+	require.True(t, ok, "error channel should carry the engine error")
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+}
+
+// TestReviewer_ReviewGameStream_ZeroValue verifies that ReviewGameStream on an
+// uninitialised Reviewer sends ErrEngineFailure and closes channels immediately.
+func TestReviewer_ReviewGameStream_ZeroValue(t *testing.T) {
+	t.Parallel()
+
+	var r Reviewer
+
+	movesCh, errCh := r.ReviewGameStream(context.Background(), "1. e4 e5 *")
+
+	_, ok := <-movesCh
+	assert.False(t, ok, "moves channel should be closed")
+
+	err, ok := <-errCh
+	require.True(t, ok)
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+	assert.Contains(t, engErr.Error(), "not initialized")
+}
+
+// TestReviewer_ReviewGameFullStream_TwoMoves verifies that ReviewGameFullStream
+// streams move reviews, emits a GameSummary after all moves, and closes all
+// channels cleanly.
+func TestReviewer_ReviewGameFullStream_TwoMoves(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[White "Magnus"]
+[Black "Hikaru"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{
+		searchInfos: []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		},
+	}
+
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh, summariesCh := r.ReviewGameFullStream(context.Background(), pgn)
+
+	var reviews []MoveReview
+
+	for mr := range movesCh {
+		reviews = append(reviews, mr)
+	}
+
+	// Error channel must be closed with no error.
+	err, ok := <-errCh
+	assert.False(t, ok, "error channel should be closed")
+	assert.NoError(t, err)
+
+	// Summary channel must carry exactly one value.
+	summary, ok := <-summariesCh
+	require.True(t, ok, "summary channel should carry a GameSummary")
+
+	_, closed := <-summariesCh
+	assert.False(t, closed, "summary channel should be closed after the summary")
+
+	require.Len(t, reviews, 2)
+	assert.Equal(t, "Magnus", summary.WhitePlayer)
+	assert.Equal(t, "Hikaru", summary.BlackPlayer)
+}
+
+// TestReviewer_ReviewGameFullStream_ReviewsMatchReviewGame verifies that the
+// reviews streamed by ReviewGameFullStream are identical to those returned by
+// ReviewGame for the same PGN and engine responses.
+func TestReviewer_ReviewGameFullStream_ReviewsMatchReviewGame(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	makeInfos := func() []stockfish.SearchInfo {
+		return []stockfish.SearchInfo{
+			makeDepthInfo(20), makeBestMoveInfo("e2e4"),
+			makeDepthInfo(30), makeBestMoveInfo("e7e5"),
+			makeDepthInfo(10), makeBestMoveInfo("d2d4"),
+		}
+	}
+
+	engineStream := &mockEngine{searchInfos: makeInfos()}
+	engineGame := &mockEngine{searchInfos: makeInfos()}
+
+	rStream := &Reviewer{engine: engineStream, cfg: defaultConfig()}
+	rGame := &Reviewer{engine: engineGame, cfg: defaultConfig()}
+
+	movesCh, _, _ := rStream.ReviewGameFullStream(context.Background(), pgn)
+
+	var streamedReviews []MoveReview
+
+	for mr := range movesCh {
+		streamedReviews = append(streamedReviews, mr)
+	}
+
+	gameReviews, err := rGame.ReviewGame(context.Background(), pgn)
+	require.NoError(t, err)
+
+	require.Equal(t, gameReviews, streamedReviews)
+}
+
+// TestReviewer_ReviewGameFullStream_InvalidPGN verifies that
+// ReviewGameFullStream sends ErrInvalidPGN on the error channel and closes all
+// channels without sending a summary.
+func TestReviewer_ReviewGameFullStream_InvalidPGN(t *testing.T) {
+	t.Parallel()
+
+	engine := &mockEngine{}
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh, summariesCh := r.ReviewGameFullStream(context.Background(), "not valid pgn!!!")
+
+	_, ok := <-movesCh
+	assert.False(t, ok, "moves channel should be closed on parse error")
+
+	err, ok := <-errCh
+	require.True(t, ok, "error channel should carry the parse error")
+
+	var pgnErr *ErrInvalidPGN
+
+	assert.ErrorAs(t, err, &pgnErr)
+
+	_, ok = <-summariesCh
+	assert.False(t, ok, "summary channel should be closed without a value on error")
+}
+
+// TestReviewer_ReviewGameFullStream_EngineError verifies that
+// ReviewGameFullStream sends ErrEngineFailure on the error channel and closes
+// the summary channel without a value when the engine fails.
+func TestReviewer_ReviewGameFullStream_EngineError(t *testing.T) {
+	t.Parallel()
+
+	const pgn = `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`
+
+	engine := &mockEngine{goErr: errors.New("engine exploded")}
+	r := &Reviewer{engine: engine, cfg: defaultConfig()}
+
+	movesCh, errCh, summariesCh := r.ReviewGameFullStream(context.Background(), pgn)
+
+	for range movesCh {
+	}
+
+	err, ok := <-errCh
+	require.True(t, ok, "error channel should carry the engine error")
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+
+	_, ok = <-summariesCh
+	assert.False(t, ok, "summary channel should be closed without a value on error")
+}
+
+// TestReviewer_ReviewGameFullStream_ZeroValue verifies that
+// ReviewGameFullStream on an uninitialised Reviewer sends ErrEngineFailure and
+// closes all channels immediately.
+func TestReviewer_ReviewGameFullStream_ZeroValue(t *testing.T) {
+	t.Parallel()
+
+	var r Reviewer
+
+	movesCh, errCh, summariesCh := r.ReviewGameFullStream(context.Background(), "1. e4 e5 *")
+
+	_, ok := <-movesCh
+	assert.False(t, ok, "moves channel should be closed")
+
+	err, ok := <-errCh
+	require.True(t, ok)
+	require.Error(t, err)
+
+	var engErr *ErrEngineFailure
+
+	assert.ErrorAs(t, err, &engErr)
+	assert.Contains(t, engErr.Error(), "not initialized")
+
+	_, ok = <-summariesCh
+	assert.False(t, ok, "summary channel should be closed")
+}
