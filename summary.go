@@ -140,8 +140,8 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 		BlackPlayer:  blackName,
 		OpeningCode:  openingCode,
 		OpeningTitle: openingTitle,
-		White:        buildPlayerSummary(white.counts, white.phases, white.total),
-		Black:        buildPlayerSummary(black.counts, black.phases, black.total),
+		White:        buildPlayerSummary(&white.counts, white.phases, white.total),
+		Black:        buildPlayerSummary(&black.counts, black.phases, black.total),
 	}
 }
 
@@ -153,7 +153,7 @@ type phaseAccum struct {
 
 // buildPlayerSummary assembles a PlayerSummary from accumulated data.
 func buildPlayerSummary(
-	counts [numClassifications]int,
+	counts *[numClassifications]int,
 	phases [numPhases]phaseAccum,
 	total phaseAccum,
 ) PlayerSummary {
@@ -175,7 +175,7 @@ func buildPlayerSummary(
 	}
 
 	return PlayerSummary{
-		ClassificationCounts: counts,
+		ClassificationCounts: *counts,
 		PhaseAccuracy:        phaseAcc,
 		Accuracy:             overallAcc,
 		GameRating:           calcGameRating(overallAcc),

@@ -23,6 +23,10 @@ const (
 	tabWriterMinWidth = 0
 	tabWriterTabWidth = 0
 	tabWriterPadding  = 2
+
+	flagDepth        = "depth"
+	flagDepthDefault = chessreview.DefaultDepth
+	flagDepthUsage   = "Stockfish search depth (higher = stronger but slower, default 18)"
 )
 
 func main() {
@@ -44,19 +48,27 @@ The Stockfish binary path is read from the STOCKFISH_PATH environment variable
 
 Example:
   chess-review game.pgn
+  chess-review --depth 20 game.pgn
   STOCKFISH_PATH=/usr/local/bin/stockfish chess-review game.pgn`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE:         run,
 	}
 
+	cmd.Flags().Int(flagDepth, flagDepthDefault, flagDepthUsage)
+
 	return cmd
 }
 
 // run is the cobra command handler. It orchestrates reading the PGN file,
 // constructing the Reviewer, and printing the analysis table and game summary.
-func run(_ *cobra.Command, args []string) error {
+func run(cmd *cobra.Command, args []string) error {
 	pgnPath := args[0]
+
+	depth, err := cmd.Flags().GetInt(flagDepth)
+	if err != nil {
+		return fmt.Errorf("reading flag --%s: %w", flagDepth, err)
+	}
 
 	stockfishPath := os.Getenv(envStockfishPath)
 	if stockfishPath == "" {
@@ -71,7 +83,7 @@ func run(_ *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	reviewer, err := chessreview.New(stockfishPath)
+	reviewer, err := chessreview.New(stockfishPath, chessreview.WithDepth(depth))
 	if err != nil {
 		return fmt.Errorf("starting engine: %w", err)
 	}
@@ -191,13 +203,14 @@ func printSummary(s *chessreview.GameSummary) {
 	classifications := []chessreview.Classification{
 		chessreview.Book,
 		chessreview.Brilliant,
+		chessreview.Great,
 		chessreview.Best,
 		chessreview.Excellent,
 		chessreview.Good,
 		chessreview.Inaccuracy,
 		chessreview.Mistake,
-		chessreview.Miss,
 		chessreview.Blunder,
+		chessreview.Miss,
 	}
 
 	for _, c := range classifications {
