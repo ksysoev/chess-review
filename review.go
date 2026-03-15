@@ -195,14 +195,15 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 		}
 
 		classCtx := ClassifyContext{
-			PlayedMove:      mv.UCIMove,
-			BestMove:        thisBestMove,
-			ScoreBefore:     scoreBefore,
-			ScoreAfter:      scoreAfterFromPlayedSide,
-			ScoreBeforePrev: prevScoreBefore[mv.Color],
-			HasPrev:         hasPrev[mv.Color],
-			IsSacrifice:     mv.IsSacrifice,
-			IsBook:          mv.IsBook,
+			PlayedMove:          mv.UCIMove,
+			BestMove:            thisBestMove,
+			ScoreBefore:         scoreBefore,
+			ScoreAfter:          scoreAfterFromPlayedSide,
+			ScoreBeforePrev:     prevScoreBefore[mv.Color],
+			HasPrev:             hasPrev[mv.Color],
+			IsSacrifice:         mv.IsSacrifice,
+			SacrificedPieceType: mv.SacrificedPieceType,
+			IsBook:              mv.IsBook,
 		}
 
 		mr := MoveReview{

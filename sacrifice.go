@@ -30,7 +30,8 @@ func pieceTypeValue(pt chess.PieceType) int {
 	return pieceTypeValues[pt]
 }
 
-// detectSacrifice reports whether move constitutes a material sacrifice.
+// detectSacrifice reports whether move constitutes a material sacrifice and,
+// when it does, returns the piece type that was sacrificed.
 //
 // A sacrifice is detected when two conditions are both met:
 //  1. The effective value of the piece arriving on the destination square
@@ -38,11 +39,14 @@ func pieceTypeValue(pt chess.PieceType) int {
 //     is negative for the moving side if the opponent recaptures).
 //  2. The opponent has at least one legal recapture on that square in afterPos.
 //
+// Returns (true, movedPieceType) when a sacrifice is detected, or
+// (false, chess.NoPieceType) otherwise.
+//
 // beforePos is the position immediately before move is applied.
 // afterPos is the position immediately after move is applied.
 // Promotions are handled by substituting the promoted piece's value for the pawn.
 // En passant is handled by using pawn value when the destination square is empty.
-func detectSacrifice(beforePos, afterPos *chess.Position, move *chess.Move) bool {
+func detectSacrifice(beforePos, afterPos *chess.Position, move *chess.Move) (bool, chess.PieceType) {
 	board := beforePos.Board()
 	toSquare := move.S2()
 
@@ -70,15 +74,15 @@ func detectSacrifice(beforePos, afterPos *chess.Position, move *chess.Move) bool
 
 	// Not a sacrifice when the immediate material exchange is even or in our favour.
 	if capturedValue >= movedValue {
-		return false
+		return false, chess.NoPieceType
 	}
 
 	// A sacrifice requires the opponent to have at least one recapture available.
 	for _, m := range afterPos.ValidMoves() {
 		if m.S2() == toSquare {
-			return true
+			return true, movedPieceType
 		}
 	}
 
-	return false
+	return false, chess.NoPieceType
 }

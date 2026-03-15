@@ -525,8 +525,9 @@ func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 	//
 	// For White's b4: scoreBefore=50, scoreAfterFromPlayedSide=55 (negated), delta=+5.
 	// isSacrifice=true (Black's bishop on c5 can capture on b4),
+	// but sacrificedPieceType=chess.Pawn — pawn sacrifices are excluded from Brilliant.
 	// playedMove==bestMove (both b2b4), scoreAfter(55) >= scoreBefore(50),
-	// scoreBefore(50) < brilliantWinningThreshold(200) → Brilliant.
+	// scoreBefore(50) < brilliantWinningThreshold(200) → Best (pawn sacrifice excluded).
 	engine := &mockEngine{
 		searchInfos: []stockfish.SearchInfo{
 			makeDepthInfo(50), makeBestMoveInfo("b2b4"),
@@ -546,7 +547,7 @@ func TestReviewer_ReviewGame_BrilliantMove(t *testing.T) {
 	assert.Equal(t, "b2b4", b4.PlayedMove)
 	assert.Equal(t, "white", b4.Color)
 	assert.True(t, b4.IsSacrifice)
-	assert.Equal(t, Brilliant, b4.Classification)
+	assert.Equal(t, Best, b4.Classification)
 }
 
 // TestReviewer_AnalyzePosition_PrefersExactOverBound verifies that when the
