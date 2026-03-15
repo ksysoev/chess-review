@@ -118,7 +118,10 @@ func winProb(cp int) float64 {
 }
 
 // winProbLoss returns the win-probability lost by a move.
-// scoreBefore and scoreAfter are both from the perspective of the side to move.
+// scoreBefore is the evaluation before the move and scoreAfter is the evaluation
+// after the move; both are expressed from the perspective of the player who made
+// the move (the same reference frame). scoreAfter is therefore the negated
+// engine score, not the raw engine output from the opponent's point of view.
 // Returns 0 if the move improved or maintained the position.
 func winProbLoss(scoreBefore, scoreAfter int) float64 {
 	loss := winProb(scoreBefore) - winProb(scoreAfter)
@@ -152,12 +155,13 @@ func winProbLoss(scoreBefore, scoreAfter int) float64 {
 //	             the position (scoreAfter >= scoreBefore), and not already clearly winning (< +2.00)
 //	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning
 //	Best       – played move equals engine best (and not a qualifying sacrifice/turning-point)
+//	Miss       – move throws away a forced mate (cp loss ≥ 20 000); checked before win-prob tiers
+//	             because sentinel-based cp loss can produce misleading win-probability values
 //	Excellent  – 0–2%  win-probability loss
 //	Good       – 2–5%  win-probability loss
 //	Inaccuracy – 5–10% win-probability loss
 //	Mistake    – 10–20% win-probability loss
 //	Blunder    – >20%  win-probability loss
-//	Miss       – move throws away a forced mate (cp loss ≥ 20 000)
 func Classify(scoreBefore, scoreAfter int, playedMove, bestMove string, isSacrifice, isBook bool) Classification {
 	// Book moves take priority over all engine-based classifications.
 	if isBook {
