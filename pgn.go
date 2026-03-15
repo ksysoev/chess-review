@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/notnil/chess"
+	"github.com/corentings/chess/v2"
 )
 
 // moveInfo holds extracted data for a single half-move (ply).
@@ -43,16 +43,17 @@ type gameInfo struct {
 func parsePGN(pgn string) (gameInfo, error) {
 	reader := strings.NewReader(pgn)
 
-	games, err := chess.GamesFromPGN(reader)
+	scanner := chess.NewScanner(reader)
+
+	if !scanner.HasNext() {
+		return gameInfo{}, &ErrInvalidPGN{Reason: "no games found in PGN"}
+	}
+
+	game, err := scanner.ParseNext()
 	if err != nil {
 		return gameInfo{}, &ErrInvalidPGN{Cause: err, Reason: err.Error()}
 	}
 
-	if len(games) == 0 {
-		return gameInfo{}, &ErrInvalidPGN{Reason: "no games found in PGN"}
-	}
-
-	game := games[0]
 	positions := game.Positions()
 	moves := game.Moves()
 
@@ -104,13 +105,9 @@ func parsePGN(pgn string) (gameInfo, error) {
 }
 
 // tagValue returns the value of a PGN tag by name, or an empty string if the
-// tag is absent. The chess.Game.GetTagPair method returns nil when missing.
+// tag is absent. The chess.Game.GetTagPair method returns an empty string when missing.
 func tagValue(g *chess.Game, tag string) string {
-	if pair := g.GetTagPair(tag); pair != nil {
-		return pair.Value
-	}
-
-	return ""
+	return g.GetTagPair(tag)
 }
 
 // parseFENMoveContext extracts the full-move number and starting-side offset
