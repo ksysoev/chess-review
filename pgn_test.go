@@ -245,3 +245,53 @@ func TestParsePGN_FENInitialFEN(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, giFEN.InitialFEN, " 0 5")
 }
+
+func TestParsePGN_PlayerNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		pgn       string
+		wantWhite string
+		wantBlack string
+	}{
+		{
+			name:      "names present in standard tags",
+			pgn:       scholarsMate,
+			wantWhite: "White",
+			wantBlack: "Black",
+		},
+		{
+			name: "names absent — empty strings returned",
+			pgn: `[Event "Test"]
+[Result "*"]
+
+1. e4 e5 *`,
+			wantWhite: "",
+			wantBlack: "",
+		},
+		{
+			name: "custom player names",
+			pgn: `[Event "Rapid"]
+[White "Alice"]
+[Black "Bob"]
+[Result "*"]
+
+1. d4 d5 *`,
+			wantWhite: "Alice",
+			wantBlack: "Bob",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gi, err := parsePGN(tt.pgn)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantWhite, gi.WhitePlayer)
+			assert.Equal(t, tt.wantBlack, gi.BlackPlayer)
+		})
+	}
+}

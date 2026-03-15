@@ -26,6 +26,12 @@ type gameInfo struct {
 	// For standard games this is the default starting FEN; for SetUp/FEN games
 	// it reflects the custom starting position from the PGN header.
 	InitialFEN string
+	// WhitePlayer is the name of the player with the white pieces, parsed from
+	// the PGN White tag. Empty string when the tag is absent.
+	WhitePlayer string
+	// BlackPlayer is the name of the player with the black pieces, parsed from
+	// the PGN Black tag. Empty string when the tag is absent.
+	BlackPlayer string
 	// Moves is the ordered list of half-moves extracted from the game.
 	Moves []moveInfo
 }
@@ -62,6 +68,9 @@ func parsePGN(pgn string) (gameInfo, error) {
 
 	startMoveNum, startBlack := parseFENMoveContext(initialFEN)
 
+	whiteName := tagValue(game, "White")
+	blackName := tagValue(game, "Black")
+
 	infos := make([]moveInfo, 0, len(moves))
 
 	for i, move := range moves {
@@ -86,7 +95,22 @@ func parsePGN(pgn string) (gameInfo, error) {
 		})
 	}
 
-	return gameInfo{InitialFEN: initialFEN, Moves: infos}, nil
+	return gameInfo{
+		InitialFEN:  initialFEN,
+		WhitePlayer: whiteName,
+		BlackPlayer: blackName,
+		Moves:       infos,
+	}, nil
+}
+
+// tagValue returns the value of a PGN tag by name, or an empty string if the
+// tag is absent. The chess.Game.GetTagPair method returns nil when missing.
+func tagValue(g *chess.Game, tag string) string {
+	if pair := g.GetTagPair(tag); pair != nil {
+		return pair.Value
+	}
+
+	return ""
 }
 
 // parseFENMoveContext extracts the full-move number and starting-side offset

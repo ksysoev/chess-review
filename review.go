@@ -53,6 +53,13 @@ type MoveReview struct {
 	MoveNumber int
 }
 
+// GameResult holds the full output of a game review: per-move analysis and an
+// aggregated summary for both players.
+type GameResult struct {
+	Reviews []MoveReview
+	Summary GameSummary
+}
+
 // Reviewer analyses chess games using a Stockfish engine.
 // It must be created with New; the zero value is not usable.
 type Reviewer struct {
@@ -124,7 +131,13 @@ func (r *Reviewer) ReviewGame(ctx context.Context, pgn string) ([]MoveReview, er
 		return nil, err
 	}
 
-	if err = r.engine.NewGame(); err != nil {
+	return r.reviewFromGameInfo(ctx, gi)
+}
+
+// reviewFromGameInfo runs the engine analysis loop over an already-parsed game.
+// It is shared by ReviewGame and ReviewGameFull to avoid duplication.
+func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi gameInfo) ([]MoveReview, error) {
+	if err := r.engine.NewGame(); err != nil {
 		return nil, &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("ucinewgame failed: %s", err.Error())}
 	}
 
@@ -220,6 +233,17 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 
 	bestMoveFound := false
 
+	// lastExactScore and lastExactMateIn track the most recent info line that
+	// carried an exact (non-bound) score. We prefer exact scores over lowerbound
+	// or upperbound values because bound scores are only guaranteed to be one
+	// side of the true minimax value; using them would introduce measurement
+	// error into per-move CPL and therefore accuracy/game-rating calculations.
+	var (
+		lastExactScore  int
+		lastExactMateIn *int
+		hasExact        bool
+	)
+
 	for info := range ch {
 		if info.IsBestMove {
 			bestMove = info.BestMove
@@ -228,6 +252,7 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 			break
 		}
 
+		// Always track the latest score as the fallback.
 		if info.Score.Type == stockfish.ScoreTypeMate {
 			n := info.Score.Value
 			mateIn = &n
@@ -236,10 +261,22 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 		}
 
 		score = normalizeScore(info.Score)
+
+		// Additionally track the last score that was exact so we can prefer it.
+		if info.Score.Bound == stockfish.ScoreBoundExact {
+			lastExactScore = score
+			lastExactMateIn = mateIn
+			hasExact = true
+		}
 	}
 
 	if !bestMoveFound {
 		return 0, "", nil, &ErrEngineFailure{Reason: "engine returned no best move"}
+	}
+
+	// Prefer the last exact score over any bound score seen last.
+	if hasExact {
+		return lastExactScore, bestMove, lastExactMateIn, nil
 	}
 
 	return score, bestMove, mateIn, nil
@@ -272,4 +309,33 @@ func (r *Reviewer) applyEngineOptions() error {
 	}
 
 	return nil
+}
+
+// ReviewGameFull analyses the provided PGN string and returns a GameResult
+// containing per-move analysis and an aggregated GameSummary for both players.
+//
+// It is equivalent to calling ReviewGame and then Summarize, but player names
+// are extracted directly from the PGN headers so the caller does not need to
+// parse them separately.
+//
+// Returns ErrInvalidPGN when the PGN cannot be parsed.
+// Returns ErrEngineFailure when communication with the engine fails.
+func (r *Reviewer) ReviewGameFull(ctx context.Context, pgn string) (GameResult, error) {
+	if r.engine == nil {
+		return GameResult{}, &ErrEngineFailure{Reason: "reviewer not initialized; use New()"}
+	}
+
+	gi, err := parsePGN(pgn)
+	if err != nil {
+		return GameResult{}, err
+	}
+
+	reviews, err := r.reviewFromGameInfo(ctx, gi)
+	if err != nil {
+		return GameResult{}, err
+	}
+
+	summary := Summarize(reviews, gi.WhitePlayer, gi.BlackPlayer)
+
+	return GameResult{Reviews: reviews, Summary: summary}, nil
 }
