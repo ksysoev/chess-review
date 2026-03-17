@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/corentings/chess/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,11 +18,12 @@ func TestClassify(t *testing.T) {
 		scoreBefore int
 		scoreAfter  int
 		// 2-ply lookback fields
-		scoreBeforePrev int
-		hasPrev         bool
-		isSacrifice     bool
-		isBook          bool
-		expected        Classification
+		scoreBeforePrev     int
+		hasPrev             bool
+		isSacrifice         bool
+		sacrificedPieceType chess.PieceType
+		isBook              bool
+		expected            Classification
 	}{
 		// --- Book move cases ---
 		{
@@ -43,11 +45,12 @@ func TestClassify(t *testing.T) {
 		{
 			name:        "book move returns Book even when sacrifice",
 			scoreBefore: 50, scoreAfter: 50,
-			playedMove:  "d2d4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			isBook:      true,
-			expected:    Book,
+			playedMove:          "d2d4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			isBook:              true,
+			expected:            Book,
 		},
 		// --- Best move cases ---
 		// A large cp loss where the move is still the engine best (played == best)
@@ -128,98 +131,109 @@ func TestClassify(t *testing.T) {
 			expected:   Blunder,
 		},
 		// --- Brilliant move cases ---
-		// All four conditions must hold: isSacrifice, playedMove == bestMove,
-		// scoreAfter >= scoreBefore, and scoreBefore < brilliantWinningThreshold.
+		// All six conditions must hold: isSacrifice, playedMove == bestMove,
+		// scoreAfter >= scoreBefore, scoreBefore < brilliantWinningThreshold,
+		// sacrificedPieceType != chess.NoPieceType, and sacrificedPieceType != chess.Pawn.
 
 		// Engine endorses the sacrifice and position is maintained → Brilliant.
 		{
 			name:        "sacrifice that is the best move with maintained score returns Brilliant",
 			scoreBefore: 50, scoreAfter: 50,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Brilliant,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Brilliant,
 		},
 		// Engine endorses and position improves after sacrifice → Brilliant.
 		{
 			name:        "sacrifice that is the best move with improved score returns Brilliant",
 			scoreBefore: 50, scoreAfter: 80,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Brilliant,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Brilliant,
 		},
 		// Sacrifice is the engine best but position worsens → falls through to Best.
 		{
 			name:        "sacrifice that is engine best but worsens position returns Best not Brilliant",
 			scoreBefore: 50, scoreAfter: 35,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Best,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Best,
 		},
 		// Sacrifice with small cp loss, NOT the engine best → falls through to Excellent.
 		{
 			name:        "sacrifice not the best move returns Excellent not Brilliant",
 			scoreBefore: 50, scoreAfter: 50,
-			playedMove:  "d2d4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Excellent,
+			playedMove:          "d2d4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Excellent,
 		},
 		// Sacrifice that is also the engine best → Brilliant takes priority over Best.
 		{
 			name:        "sacrifice that is also engine best returns Brilliant not Best",
 			scoreBefore: 100, scoreAfter: 100,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Brilliant,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Bishop,
+			expected:            Brilliant,
 		},
 		// Sacrifice with large loss, not best → Inaccuracy (unchanged from before).
 		{
 			name:        "sacrifice with large win-prob loss falls through to Inaccuracy (not Brilliant)",
 			scoreBefore: 50, scoreAfter: -60,
-			playedMove:  "d2d4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Inaccuracy,
+			playedMove:          "d2d4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Inaccuracy,
 		},
 		// Brilliant suppressed: scoreBefore=200 (at threshold) → not below threshold → suppressed.
 		{
 			name:        "sacrifice suppressed when scoreBefore equals brilliantWinningThreshold (200 cp)",
 			scoreBefore: 200, scoreAfter: 200,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Best,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Best,
 		},
 		// Brilliant suppressed: scoreBefore=300 > 200 → not Brilliant.
 		{
 			name:        "sacrifice suppressed when position clearly winning (300 cp > 200 threshold)",
 			scoreBefore: 300, scoreAfter: 295,
-			playedMove:  "d2d4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Excellent,
+			playedMove:          "d2d4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Excellent,
 		},
 		// Brilliant suppressed: scoreBefore=500.
 		{
 			name:        "sacrifice suppressed when position winning (500 cp)",
 			scoreBefore: 500, scoreAfter: 500,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Best,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Rook,
+			expected:            Best,
 		},
 		// Brilliant suppressed: scoreBefore=900.
 		{
 			name:        "sacrifice suppressed when position overwhelmingly winning (900 cp)",
 			scoreBefore: 900, scoreAfter: 900,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Best,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Queen,
+			expected:            Best,
 		},
 		// Non-sacrifice with tiny loss → Excellent, not Brilliant.
 		{
@@ -229,6 +243,27 @@ func TestClassify(t *testing.T) {
 			bestMove:    "e2e4",
 			isSacrifice: false,
 			expected:    Excellent,
+		},
+		// Pawn sacrifice: all other conditions met but sacrificedPieceType is Pawn → not Brilliant.
+		{
+			name:        "pawn sacrifice is excluded from Brilliant even when all other conditions met",
+			scoreBefore: 50, scoreAfter: 55,
+			playedMove:          "b2b4",
+			bestMove:            "b2b4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Pawn,
+			expected:            Best,
+		},
+		// NoPieceType sacrifice: IsSacrifice=true but SacrificedPieceType left at zero value → not Brilliant.
+		// This guards against callers that set IsSacrifice without populating SacrificedPieceType.
+		{
+			name:        "sacrifice with NoPieceType is excluded from Brilliant (fail-closed guard)",
+			scoreBefore: 50, scoreAfter: 55,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.NoPieceType,
+			expected:            Best,
 		},
 		// --- Great move cases (1-ply) ---
 		// Rescue from losing (winProb < 0.40) into equal territory.
@@ -255,19 +290,21 @@ func TestClassify(t *testing.T) {
 		{
 			name:        "sacrifice turning-point without being best move returns Great not Brilliant",
 			scoreBefore: 50, scoreAfter: 400,
-			playedMove:  "d2d4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Great,
+			playedMove:          "d2d4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Great,
 		},
 		// Sacrifice, turning-point, AND the engine's best move → Brilliant takes priority over Great.
 		{
 			name:        "sacrifice turning-point that is also best move returns Brilliant over Great",
 			scoreBefore: 50, scoreAfter: 400,
-			playedMove:  "e2e4",
-			bestMove:    "e2e4",
-			isSacrifice: true,
-			expected:    Brilliant,
+			playedMove:          "e2e4",
+			bestMove:            "e2e4",
+			isSacrifice:         true,
+			sacrificedPieceType: chess.Knight,
+			expected:            Brilliant,
 		},
 		// Great: rescue from losing, and it is also the best move → Great takes priority over Best.
 		{
@@ -354,14 +391,15 @@ func TestClassify(t *testing.T) {
 			t.Parallel()
 
 			ctx := ClassifyContext{
-				PlayedMove:      tc.playedMove,
-				BestMove:        tc.bestMove,
-				ScoreBefore:     tc.scoreBefore,
-				ScoreAfter:      tc.scoreAfter,
-				ScoreBeforePrev: tc.scoreBeforePrev,
-				HasPrev:         tc.hasPrev,
-				IsSacrifice:     tc.isSacrifice,
-				IsBook:          tc.isBook,
+				PlayedMove:          tc.playedMove,
+				BestMove:            tc.bestMove,
+				ScoreBefore:         tc.scoreBefore,
+				ScoreAfter:          tc.scoreAfter,
+				ScoreBeforePrev:     tc.scoreBeforePrev,
+				HasPrev:             tc.hasPrev,
+				IsSacrifice:         tc.isSacrifice,
+				SacrificedPieceType: tc.sacrificedPieceType,
+				IsBook:              tc.isBook,
 			}
 			result := Classify(ctx)
 

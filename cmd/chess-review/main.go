@@ -25,6 +25,14 @@ const (
 	flagDepthDefault = chessreview.DefaultDepth
 	flagDepthUsage   = "Stockfish search depth (higher = stronger but slower, default 18)"
 
+	flagThreads        = "threads"
+	flagThreadsDefault = chessreview.DefaultThreads
+	flagThreadsUsage   = "Number of CPU threads Stockfish may use (default 1)"
+
+	flagHash        = "hash"
+	flagHashDefault = chessreview.DefaultHashMB
+	flagHashUsage   = "Stockfish transposition table size in MB (default 16)"
+
 	// Column widths for the fixed-format streaming move table.
 	colMove           = 4
 	colColor          = 5
@@ -60,6 +68,7 @@ The Stockfish binary path is read from the STOCKFISH_PATH environment variable
 Example:
   chess-review game.pgn
   chess-review --depth 20 game.pgn
+  chess-review --depth 20 --threads 4 --hash 128 game.pgn
   STOCKFISH_PATH=/usr/local/bin/stockfish chess-review game.pgn`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
@@ -67,6 +76,8 @@ Example:
 	}
 
 	cmd.Flags().Int(flagDepth, flagDepthDefault, flagDepthUsage)
+	cmd.Flags().Int(flagThreads, flagThreadsDefault, flagThreadsUsage)
+	cmd.Flags().Int(flagHash, flagHashDefault, flagHashUsage)
 
 	return cmd
 }
@@ -79,6 +90,16 @@ func run(cmd *cobra.Command, args []string) error {
 	depth, err := cmd.Flags().GetInt(flagDepth)
 	if err != nil {
 		return fmt.Errorf("reading flag --%s: %w", flagDepth, err)
+	}
+
+	threads, err := cmd.Flags().GetInt(flagThreads)
+	if err != nil {
+		return fmt.Errorf("reading flag --%s: %w", flagThreads, err)
+	}
+
+	hash, err := cmd.Flags().GetInt(flagHash)
+	if err != nil {
+		return fmt.Errorf("reading flag --%s: %w", flagHash, err)
 	}
 
 	stockfishPath := os.Getenv(envStockfishPath)
@@ -94,7 +115,7 @@ func run(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	reviewer, err := chessreview.New(stockfishPath, chessreview.WithDepth(depth))
+	reviewer, err := chessreview.New(stockfishPath, chessreview.WithDepth(depth), chessreview.WithThreads(threads), chessreview.WithHash(hash))
 	if err != nil {
 		return fmt.Errorf("starting engine: %w", err)
 	}

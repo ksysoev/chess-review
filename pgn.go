@@ -19,6 +19,9 @@ type moveInfo struct {
 	// IsSacrifice is true when the move gives up material that the opponent can
 	// immediately recapture, making it a candidate for a Brilliant annotation.
 	IsSacrifice bool
+	// SacrificedPieceType is the type of the piece that was sacrificed when
+	// IsSacrifice is true, and chess.NoPieceType otherwise.
+	SacrificedPieceType chess.PieceType
 	// IsBook is true when the move is part of a known ECO opening line.
 	// Book moves are not judged by engine evaluation and are excluded from
 	// accuracy calculations.
@@ -135,12 +138,15 @@ func parsePGN(pgn string) (gameInfo, error) {
 			}
 		}
 
+		isSacrifice, sacrificedPieceType := detectSacrifice(positions[i], positions[i+1], move)
+
 		infos = append(infos, moveInfo{
-			UCIMove:     moveToUCI(move),
-			Color:       color,
-			MoveNumber:  moveNumber,
-			IsSacrifice: detectSacrifice(positions[i], positions[i+1], move),
-			IsBook:      isBook,
+			UCIMove:             moveToUCI(move),
+			Color:               color,
+			MoveNumber:          moveNumber,
+			IsSacrifice:         isSacrifice,
+			SacrificedPieceType: sacrificedPieceType,
+			IsBook:              isBook,
 		})
 	}
 

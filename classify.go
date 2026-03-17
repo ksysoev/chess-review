@@ -1,6 +1,10 @@
 package chessreview
 
-import "math"
+import (
+	"math"
+
+	"github.com/corentings/chess/v2"
+)
 
 // Classification represents the quality rating of a chess move.
 type Classification int
@@ -160,8 +164,14 @@ type ClassifyContext struct {
 	// move of each colour (no prior turn to look back to).
 	HasPrev bool
 	// IsSacrifice is true when the move gives up material that the opponent can
-	// immediately recapture, making it a candidate for a Brilliant annotation.
+	// immediately recapture. It is a necessary but not sufficient condition for
+	// a Brilliant annotation: SacrificedPieceType must also be set and must not
+	// be a pawn (pawn sacrifices are excluded from Brilliant).
 	IsSacrifice bool
+	// SacrificedPieceType is the type of the piece that was sacrificed when
+	// IsSacrifice is true, and chess.NoPieceType otherwise. Pawn sacrifices are
+	// excluded from the Brilliant classification — only non-pawn sacrifices qualify.
+	SacrificedPieceType chess.PieceType
 	// IsBook is true when the move is part of known opening theory (ECO
 	// database). Book moves are returned immediately as Book — they are not
 	// judged by engine evaluation.
@@ -174,7 +184,8 @@ type ClassifyContext struct {
 //
 //	Book       – move is in the ECO opening book (theory)
 //	Brilliant  – sacrifice that is the engine's top choice, improves or maintains
-//	             the position (ScoreAfter >= ScoreBefore), and not already clearly winning (< +2.00)
+//	             the position (ScoreAfter >= ScoreBefore), not already clearly winning (< +2.00),
+//	             and the sacrificed piece is not a pawn
 //	Great      – critical turning-point: losing→equal/winning, or equal→clearly winning,
 //	             AND win-probability loss ≤ 2% (excellentWinProbThreshold).
 //	             Checked against both the immediate ScoreBefore (1-ply) and, when
@@ -205,12 +216,16 @@ func Classify(ctx ClassifyContext) Classification {
 	// Brilliant: a material sacrifice that is also the engine's top choice,
 	// improves or maintains the position (ScoreAfter >= ScoreBefore), and was
 	// made when the position was not already clearly winning (< +2.00 / 200 cp).
-	// All four conditions must hold simultaneously:
+	// Pawn sacrifices are excluded — they are common strategic motifs (gambits,
+	// pawn levers) rather than spectacular piece sacrifices deserving "!!".
+	// All six conditions must hold simultaneously:
 	//   1. IsSacrifice — the move gives up material the opponent can recapture
 	//   2. PlayedMove == BestMove — the engine endorses it as the top choice
 	//   3. ScoreAfter >= ScoreBefore — the position does not worsen after the sacrifice
 	//   4. ScoreBefore < brilliantWinningThreshold — not already clearly winning
-	if ctx.IsSacrifice && ctx.PlayedMove == ctx.BestMove && ctx.ScoreAfter >= ctx.ScoreBefore && ctx.ScoreBefore < brilliantWinningThreshold {
+	//   5. SacrificedPieceType != chess.NoPieceType — piece type must be known
+	//   6. SacrificedPieceType != chess.Pawn — pawn sacrifices are excluded
+	if ctx.IsSacrifice && ctx.PlayedMove == ctx.BestMove && ctx.ScoreAfter >= ctx.ScoreBefore && ctx.ScoreBefore < brilliantWinningThreshold && ctx.SacrificedPieceType != chess.NoPieceType && ctx.SacrificedPieceType != chess.Pawn {
 		return Brilliant
 	}
 
