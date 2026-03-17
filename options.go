@@ -6,9 +6,13 @@ const (
 	// DefaultDepth is the default Stockfish search depth used when no WithDepth
 	// option is provided. It is exported so that callers (e.g. a CLI) can use it
 	// as their own default without duplicating the value.
-	DefaultDepth   = 18
-	defaultThreads = 1
-	defaultHashMB  = 16
+	DefaultDepth = 18
+	// DefaultThreads is the default number of CPU threads Stockfish may use.
+	// It is exported so that callers (e.g. a CLI) can use it as their own default.
+	DefaultThreads = 1
+	// DefaultHashMB is the default transposition table size in megabytes.
+	// It is exported so that callers (e.g. a CLI) can use it as their own default.
+	DefaultHashMB = 16
 )
 
 // config holds internal configuration for a Reviewer.
@@ -50,8 +54,8 @@ func WithHash(mb int) Option {
 func defaultConfig() config {
 	return config{
 		depth:   DefaultDepth,
-		threads: defaultThreads,
-		hashMB:  defaultHashMB,
+		threads: DefaultThreads,
+		hashMB:  DefaultHashMB,
 	}
 }
 
