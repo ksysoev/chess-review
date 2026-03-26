@@ -30,6 +30,74 @@ func pieceTypeValue(pt chess.PieceType) int {
 	return pieceTypeValues[pt]
 }
 
+// leastValuableAttacker finds the legal move that captures on targetSquare using
+// the least valuable piece of the side to move. For promotions the effective
+// value is the promoted piece's value (the piece that will actually sit on the
+// square after capturing). Returns (nil, 0) when no legal capture exists.
+func leastValuableAttacker(pos *chess.Position, targetSquare chess.Square) (move *chess.Move, value int) {
+	moves := pos.ValidMoves()
+	board := pos.Board()
+
+	bestIdx := -1
+	bestValue := 0
+
+	for i := range moves {
+		if moves[i].S2() != targetSquare {
+			continue
+		}
+
+		pieceType := board.Piece(moves[i].S1()).Type()
+		if promo := moves[i].Promo(); promo != chess.NoPieceType {
+			pieceType = promo
+		}
+
+		value := pieceTypeValue(pieceType)
+		if bestIdx == -1 || value < bestValue {
+			bestIdx = i
+			bestValue = value
+		}
+	}
+
+	if bestIdx == -1 {
+		return nil, 0
+	}
+
+	return &moves[bestIdx], bestValue
+}
+
+// staticExchangeEval computes the material gain for the side to move when
+// initiating or continuing a capture chain on targetSquare. targetValue is
+// the value of the piece currently sitting on the square.
+//
+// The function uses a negamax formulation with the invariant max(0, …),
+// which models each side's option to decline a recapture when it would
+// lose material. A return value of 0 means either no attacker exists or
+// capturing is not profitable for the side to move.
+//
+// Legal-move generation (Position.ValidMoves) is used at each level, so
+// pinned pieces are correctly excluded and king safety is respected.
+func staticExchangeEval(pos *chess.Position, targetSquare chess.Square, targetValue int) int {
+	attacker, attackerValue := leastValuableAttacker(pos, targetSquare)
+	if attacker == nil {
+		return 0
+	}
+
+	// Simulate the capture.
+	newPos := pos.Update(attacker)
+
+	// The capturing side gains targetValue but puts attackerValue at risk.
+	// The opponent may recapture (gaining attackerValue minus their own risk).
+	// max(0, …) reflects that the opponent can decline the recapture.
+	opponentGain := staticExchangeEval(newPos, targetSquare, attackerValue)
+
+	gain := targetValue - opponentGain
+	if gain < 0 {
+		return 0
+	}
+
+	return gain
+}
+
 // detectSacrifice reports whether move constitutes a material sacrifice and,
 // when it does, returns the piece type that was sacrificed.
 //
@@ -37,7 +105,10 @@ func pieceTypeValue(pt chess.PieceType) int {
 //  1. The effective value of the piece arriving on the destination square
 //     exceeds the value of any piece captured there (net material investment
 //     is negative for the moving side if the opponent recaptures).
-//  2. The opponent has at least one legal recapture on that square in afterPos.
+//  2. Static Exchange Evaluation (SEE) on the destination square shows that
+//     recapturing is profitable for the opponent when the full capture chain
+//     is considered. This filters out "false sacrifices" where the piece is
+//     well-defended (e.g. a Knight on an outpost protected by a pawn).
 //
 // Returns (true, movedPieceType) when a sacrifice is detected, or
 // (false, chess.NoPieceType) otherwise.
@@ -77,11 +148,14 @@ func detectSacrifice(beforePos, afterPos *chess.Position, move *chess.Move) (boo
 		return false, chess.NoPieceType
 	}
 
-	// A sacrifice requires the opponent to have at least one recapture available.
-	for _, m := range afterPos.ValidMoves() {
-		if m.S2() == toSquare {
-			return true, movedPieceType
-		}
+	// Use Static Exchange Evaluation (SEE) to determine whether recapturing
+	// is actually profitable for the opponent once the full capture chain is
+	// considered. If the SEE value for the opponent is at most capturedValue,
+	// the moving side breaks even or gains material — the piece is sufficiently
+	// defended and this is not a real sacrifice.
+	seeValue := staticExchangeEval(afterPos, toSquare, movedValue)
+	if seeValue > capturedValue {
+		return true, movedPieceType
 	}
 
 	return false, chess.NoPieceType
