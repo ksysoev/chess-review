@@ -42,7 +42,7 @@ func leastValuableAttacker(pos *chess.Position, targetSquare chess.Square) (move
 	bestValue := 0
 
 	for i := range moves {
-		if moves[i].S2() != targetSquare {
+		if moves[i].S2() != targetSquare || !moves[i].HasTag(chess.Capture) {
 			continue
 		}
 
