@@ -31,30 +31,32 @@ func pieceTypeValue(pt chess.PieceType) int {
 }
 
 // leastValuableAttacker finds the legal move that captures on targetSquare using
-// the least valuable piece of the side to move. For promotions the effective
-// value is the promoted piece's value (the piece that will actually sit on the
-// square after capturing). Returns (nil, 0) when no legal capture exists.
+// the least valuable piece of the side to move.
+//
+// Attacker selection uses the original piece type for ordering (a pawn risks
+// only 100 cp regardless of what it promotes to), but the returned value is
+// the piece that will actually sit on the square after capturing — for
+// promotions this is the promoted piece's value.
+//
+// Returns (nil, 0) when no legal capture exists.
 func leastValuableAttacker(pos *chess.Position, targetSquare chess.Square) (move *chess.Move, value int) {
 	moves := pos.ValidMoves()
 	board := pos.Board()
 
 	bestIdx := -1
-	bestValue := 0
+	bestOrderValue := 0
 
 	for i := range moves {
 		if moves[i].S2() != targetSquare || !moves[i].HasTag(chess.Capture) {
 			continue
 		}
 
-		pieceType := board.Piece(moves[i].S1()).Type()
-		if promo := moves[i].Promo(); promo != chess.NoPieceType {
-			pieceType = promo
-		}
-
-		value := pieceTypeValue(pieceType)
-		if bestIdx == -1 || value < bestValue {
+		// Use the original piece type for ordering — a pawn risks only 100 cp
+		// regardless of what it promotes to.
+		orderValue := pieceTypeValue(board.Piece(moves[i].S1()).Type())
+		if bestIdx == -1 || orderValue < bestOrderValue {
 			bestIdx = i
-			bestValue = value
+			bestOrderValue = orderValue
 		}
 	}
 
@@ -62,7 +64,14 @@ func leastValuableAttacker(pos *chess.Position, targetSquare chess.Square) (move
 		return nil, 0
 	}
 
-	return &moves[bestIdx], bestValue
+	// The returned value is the piece that will sit on the square after the
+	// capture. For promotions this is the promoted piece's value.
+	pieceType := board.Piece(moves[bestIdx].S1()).Type()
+	if promo := moves[bestIdx].Promo(); promo != chess.NoPieceType {
+		pieceType = promo
+	}
+
+	return &moves[bestIdx], pieceTypeValue(pieceType)
 }
 
 // staticExchangeEval computes the material gain for the side to move when
@@ -74,6 +83,10 @@ func leastValuableAttacker(pos *chess.Position, targetSquare chess.Square) (move
 // lose material. A return value of 0 means either no attacker exists or
 // capturing is not profitable for the side to move.
 //
+// Promotion captures are handled by adding the promotion material delta
+// (promoted piece value minus pawn value) to the gain — the pawn becomes
+// a more valuable piece in addition to capturing the target.
+//
 // Legal-move generation (Position.ValidMoves) is used at each level, so
 // pinned pieces are correctly excluded and king safety is respected.
 func staticExchangeEval(pos *chess.Position, targetSquare chess.Square, targetValue int) int {
@@ -82,15 +95,23 @@ func staticExchangeEval(pos *chess.Position, targetSquare chess.Square, targetVa
 		return 0
 	}
 
+	// When the capture involves a promotion, the side to move gains additional
+	// material from the pawn becoming a more valuable piece.
+	promoDelta := 0
+	if promo := attacker.Promo(); promo != chess.NoPieceType {
+		promoDelta = pieceTypeValue(promo) - pawnValue
+	}
+
 	// Simulate the capture.
 	newPos := pos.Update(attacker)
 
-	// The capturing side gains targetValue but puts attackerValue at risk.
-	// The opponent may recapture (gaining attackerValue minus their own risk).
-	// max(0, …) reflects that the opponent can decline the recapture.
+	// The capturing side gains targetValue (plus any promotion delta) but puts
+	// attackerValue at risk. The opponent may recapture (gaining attackerValue
+	// minus their own risk). max(0, …) reflects that the opponent can decline
+	// the recapture.
 	opponentGain := staticExchangeEval(newPos, targetSquare, attackerValue)
 
-	gain := targetValue - opponentGain
+	gain := targetValue + promoDelta - opponentGain
 	if gain < 0 {
 		return 0
 	}

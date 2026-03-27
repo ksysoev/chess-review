@@ -291,6 +291,17 @@ func TestLeastValuableAttacker(t *testing.T) {
 			targetSquare:  chess.D5,
 			expectedValue: bishopValue,
 		},
+		{
+			// White pawn on c7 (100) and White Knight on f7 (300) both attack d8.
+			// The pawn promotes to queen on capture, but ordering uses the pawn's
+			// original value (100), so the pawn is chosen over the knight (300).
+			// The returned value is the promoted piece's value (queen = 900)
+			// because that is what will sit on the square after the capture.
+			name:          "promoting pawn chosen over knight — ordering uses pawn value",
+			fen:           "3r4/2P2N2/8/8/8/8/8/K6k w - - 0 1",
+			targetSquare:  chess.D8,
+			expectedValue: queenValue,
+		},
 	}
 
 	for _, tc := range tests {
@@ -376,6 +387,26 @@ func TestStaticExchangeEval(t *testing.T) {
 			targetSquare: chess.D5,
 			targetValue:  queenValue,
 			expectedSEE:  queenValue,
+		},
+		{
+			// Black Rook on d8. White pawn on c7 captures and promotes to queen.
+			// No Black piece can recapture.
+			// SEE = rookValue (500) + promotion delta (900 − 100) = 1300.
+			name:         "promotion capture with no recapture — SEE includes promotion delta",
+			fen:          "3r4/2P5/8/8/8/8/8/K6k w - - 0 1",
+			targetSquare: chess.D8,
+			targetValue:  rookValue,
+			expectedSEE:  rookValue + queenValue - pawnValue,
+		},
+		{
+			// Black Rook on d8, Black Rook on a8. White pawn on c7 captures d8
+			// and promotes to queen. Black Rook on a8 recaptures.
+			// SEE = rookValue (500) + promo delta (800) − queen recaptured (900) = 400.
+			name:         "promotion capture with recapture — SEE nets promotion delta minus recapture",
+			fen:          "r2r4/2P5/8/8/8/8/8/1K5k w - - 0 1",
+			targetSquare: chess.D8,
+			targetValue:  rookValue,
+			expectedSEE:  rookValue + queenValue - pawnValue - queenValue,
 		},
 	}
 
