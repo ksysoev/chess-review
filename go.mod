@@ -3,7 +3,7 @@ module github.com/ksysoev/chess-review
 go 1.26
 
 require (
-	github.com/corentings/chess/v2 v2.3.7
+	github.com/corentings/chess/v2 v2.3.8
 	github.com/ksysoev/stockfish v0.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
