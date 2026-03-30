@@ -3,9 +3,10 @@ package chessreview
 import (
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/corentings/chess/v2"
-	"github.com/corentings/chess/v2/opening"
+	openings "github.com/ksysoev/chess-openings"
 )
 
 // moveInfo holds extracted data for a single half-move (ply).
@@ -86,21 +87,9 @@ func parsePGN(pgn string) (gameInfo, error) {
 	whiteName := tagValue(game, "White")
 	blackName := tagValue(game, "Black")
 
-	// Build the ECO opening book once and walk move prefixes to detect which
-	// moves are theory and to identify the deepest known opening line.
-	// Book detection is only meaningful for games that start from the standard
-	// position; custom FEN games are skipped entirely.
-	var book *opening.BookECO
-
-	if strings.HasPrefix(initialFEN, standardStartFEN) {
-		book = opening.NewBookECO()
-	}
-
-	var openingCode, openingTitle string
-
-	// prevOpening tracks the deepest ECO opening matched before the current
-	// move so we can detect when Find advances to a new (deeper) node.
-	var prevOpening *opening.Opening
+	// Opening detection is only meaningful for games that start from the
+	// standard position; custom FEN games are skipped entirely.
+	detectOpenings := strings.HasPrefix(initialFEN, standardStartFEN)
 
 	infos := make([]moveInfo, 0, len(moves))
 
@@ -118,26 +107,6 @@ func parsePGN(pgn string) (gameInfo, error) {
 		//nolint:mnd // arithmetic: (ply + black-offset) / 2 gives full-move number
 		moveNumber := startMoveNum + (i+startBlack)/2
 
-		// A move is a book move when Find advances to a deeper ECO node after
-		// playing it. Find walks the trie and returns the nearest ancestor with
-		// an opening label; if the move is not in the trie it stays at the same
-		// node and returns the same opening as before, so the pointer comparison
-		// correctly distinguishes on-book from off-book moves.
-		// Book detection is skipped entirely for games starting from a custom FEN.
-		isBook := false
-
-		if book != nil {
-			currOpening := book.Find(moves[:i+1])
-			isBook = currOpening != prevOpening
-			prevOpening = currOpening
-
-			// Update the opening name to the deepest recognised line.
-			if isBook && currOpening != nil {
-				openingCode = currOpening.Code()
-				openingTitle = currOpening.Title()
-			}
-		}
-
 		isSacrifice, sacrificedPieceType := detectSacrifice(positions[i], positions[i+1], move)
 
 		infos = append(infos, moveInfo{
@@ -146,8 +115,32 @@ func parsePGN(pgn string) (gameInfo, error) {
 			MoveNumber:          moveNumber,
 			IsSacrifice:         isSacrifice,
 			SacrificedPieceType: sacrificedPieceType,
-			IsBook:              isBook,
 		})
+	}
+
+	// Identify the opening by matching board positions against the Lichess
+	// opening database (~3,500 named openings). The position-based lookup
+	// handles transpositions: if a game reaches a known opening position via
+	// a non-standard move order it is still correctly identified.
+	// All moves up to and including the deepest matched ply are marked as
+	// book moves and excluded from engine-based classification.
+	var openingCode, openingTitle string
+
+	if detectOpenings {
+		uciMoves := make([]string, len(infos))
+		for i, info := range infos {
+			uciMoves[i] = info.UCIMove
+		}
+
+		result, err := openingBook().Classify(uciMoves)
+		if err == nil && result.Opening != nil {
+			openingCode = result.Opening.ECO
+			openingTitle = result.Opening.Name
+
+			for i := range result.Ply {
+				infos[i].IsBook = true
+			}
+		}
 	}
 
 	return gameInfo{
@@ -163,6 +156,23 @@ func parsePGN(pgn string) (gameInfo, error) {
 // standardStartFEN is the FEN for the standard chess starting position.
 // ECO opening detection is only meaningful when a game begins from this position.
 const standardStartFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
+
+var (
+	openingBookOnce sync.Once
+	openingBookInst *openings.Book
+)
+
+// openingBook returns a lazily-initialized singleton of the Lichess opening
+// book (~3,500 named openings). The book is created once on first access and
+// reused across all subsequent calls, avoiding repeated construction of the
+// position map and move trie.
+func openingBook() *openings.Book {
+	openingBookOnce.Do(func() {
+		openingBookInst = openings.New()
+	})
+
+	return openingBookInst
+}
 
 // tagValue returns the value of a PGN tag by name, or an empty string if the
 // tag is absent. The chess.Game.GetTagPair method returns an empty string when missing.
