@@ -1,6 +1,7 @@
 package chessreview
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -133,7 +134,16 @@ func parsePGN(pgn string) (gameInfo, error) {
 		}
 
 		result, err := openingBook().Classify(uciMoves)
-		if err == nil && result.Opening != nil {
+		if err != nil {
+			// Classification can fail if the underlying chess library
+			// (notnil/chess) rejects a UCI move that corentings/chess/v2
+			// accepted. This is non-fatal: the game review proceeds
+			// without opening annotation and book-move tagging.
+			slog.Warn("opening classification failed, proceeding without book moves",
+				"error", err,
+				"moves", len(uciMoves),
+			)
+		} else if result.Opening != nil {
 			openingCode = result.Opening.ECO
 			openingTitle = result.Opening.Name
 
