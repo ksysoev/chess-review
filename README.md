@@ -75,7 +75,12 @@ func main() {
             }
 
             if m.MateIn != nil {
-                topParts = append(topParts, fmt.Sprintf("%s(M%d)", m.Move, *m.MateIn))
+                mate := *m.MateIn
+                if mate > 0 {
+                    topParts = append(topParts, fmt.Sprintf("%s(M%d)", m.Move, mate))
+                } else {
+                    topParts = append(topParts, fmt.Sprintf("%s(-M%d)", m.Move, -mate))
+                }
             } else {
                 topParts = append(topParts, fmt.Sprintf("%s(%+d)", m.Move, m.Score))
             }

@@ -1150,7 +1150,10 @@ func TestReviewer_ReviewGameFullStream_ZeroValue(t *testing.T) {
 func TestReviewer_ReviewGame_MultiPV(t *testing.T) {
 	t.Parallel()
 
-	// Use a SetUp FEN so the single move "d2d4" is off-book.
+	// Use a SetUp FEN with the standard starting position.
+	// Note: detectOpenings will still run (the FEN matches the standard start
+	// prefix), so 1.d4 may be classified as a book move. This test focuses on
+	// MultiPV evaluation (TopMoves ordering and scores), not on book detection.
 	const pgn = `[Event "Test"]
 [Result "*"]
 [SetUp "1"]
