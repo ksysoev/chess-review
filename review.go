@@ -328,7 +328,23 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 	// Prefer exact scores; fall back to any score seen for that PV.
 	// For PV 1, the bestmove line is authoritative for the move itself
 	// (covers engines / mocks that do not include a pv token in info lines).
-	maxPV := len(pvAny)
+	//
+	// Use the maximum observed key rather than len(pvAny): if the engine emits
+	// sparse MultiPV indexes (e.g. PV1 and PV3 but no PV2), len(pvAny) equals
+	// the count of entries (2) while the highest index is 3, so the len-based
+	// loop would silently drop higher-index PVs.  Cap at cfg.topMoves to
+	// discard any unexpected extra PVs the engine might return.
+	maxPV := 0
+	for idx := range pvAny {
+		if idx > maxPV {
+			maxPV = idx
+		}
+	}
+
+	if maxPV > r.cfg.topMoves {
+		maxPV = r.cfg.topMoves
+	}
+
 	if maxPV == 0 {
 		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
 	}

@@ -37,6 +37,7 @@ import (
     "context"
     "fmt"
     "log"
+    "strings"
 
     chessreview "github.com/ksysoev/chess-review"
 )
@@ -66,11 +67,23 @@ func main() {
 
     for _, r := range reviews {
         bestMove := ""
-        if len(r.TopMoves) > 0 {
-            bestMove = r.TopMoves[0].Move
+        topParts := make([]string, 0, len(r.TopMoves))
+
+        for _, m := range r.TopMoves {
+            if bestMove == "" {
+                bestMove = m.Move
+            }
+
+            if m.MateIn != nil {
+                topParts = append(topParts, fmt.Sprintf("%s(M%d)", m.Move, *m.MateIn))
+            } else {
+                topParts = append(topParts, fmt.Sprintf("%s(%+d)", m.Move, m.Score))
+            }
         }
-        fmt.Printf("Move %d (%s) %s → %s [%s]\n",
-            r.MoveNumber, r.Color, r.PlayedMove, bestMove, r.Classification)
+
+        fmt.Printf("Move %d (%s) %s → %s [%s]   top: %s\n",
+            r.MoveNumber, r.Color, r.PlayedMove, bestMove, r.Classification,
+            strings.Join(topParts, " "))
     }
 }
 ```

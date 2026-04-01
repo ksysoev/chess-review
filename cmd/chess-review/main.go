@@ -240,6 +240,14 @@ func printTableHeader() {
 
 // printTableRow writes a single move review as a fixed-width row to stdout.
 func printTableRow(r *chessreview.MoveReview) {
+	// Truncate the Top Moves string so the column never exceeds colTopMoves
+	// characters.  %-*s pads but does not truncate, so a long value (e.g. when
+	// --top-moves is large) would overflow the fixed-width column.
+	top := formatTopMoves(r.TopMoves)
+	if len(top) > colTopMoves {
+		top = top[:colTopMoves]
+	}
+
 	fmt.Fprintf(os.Stdout,
 		"%-*d  %-*s  %-*s  %-*s  %-*s  %-*s  %-*d  %-*d  %+*d  %-*s\n",
 		colMove, r.MoveNumber,
@@ -251,7 +259,7 @@ func printTableRow(r *chessreview.MoveReview) {
 		colScoreBefore, r.ScoreBefore,
 		colScoreAfter, r.ScoreAfter,
 		colDelta, r.ScoreDelta,
-		colTopMoves, formatTopMoves(r.TopMoves),
+		colTopMoves, top,
 	)
 }
 
