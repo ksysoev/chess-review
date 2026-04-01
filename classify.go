@@ -82,8 +82,8 @@ const mateScoreSentinel = 30_000
 const missThreshold = mateScoreSentinel * 2 / 3
 
 // Win-probability loss thresholds for move classification.
-// Based on the chess.com Expected Points Model: each threshold represents the
-// upper bound of win-probability lost for that classification tier.
+// Each threshold represents the upper bound of win-probability lost for that
+// classification tier, using the Lichess-calibrated win-probability model.
 //
 //	Excellent  – 0–2%  win-probability loss
 //	Good       – 2–5%  win-probability loss
@@ -115,12 +115,38 @@ const greatLosingThreshold = 0.40
 // qualifies as Great.
 const greatWinningThreshold = 0.60
 
+// winProbCoeff is the Lichess empirically calibrated coefficient for the
+// logistic win-probability model. Derived from analysis of 2300-rated games.
+// Source: https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/scala/eval.scala
+const winProbCoeff = 0.00368208
+
+// winProbCPCap limits the centipawn input to winProb to avoid extreme values
+// that would push the sigmoid to 0 or 1 and hide real differences.
+const winProbCPCap = 1000
+
 // winProb converts a centipawn evaluation to a win probability in [0, 1] using
-// a logistic (sigmoid) function calibrated to chess engine evaluations.
-// The formula is: 1 / (1 + exp(-cp / 400))
-// At 0 cp (equal) → 0.50; at +400 cp → ~0.73; at −400 cp → ~0.27.
+// a logistic (sigmoid) function with the Lichess empirically calibrated
+// coefficient. The centipawn value is clamped to [-1000, 1000] before the
+// calculation.
+//
+// The formula is: 1 / (1 + exp(-winProbCoeff * cp))
+// At 0 cp (equal) → 0.50; at +400 cp → ~0.81; at −400 cp → ~0.19.
 func winProb(cp int) float64 {
-	return 1.0 / (1.0 + math.Exp(-float64(cp)/400.0))
+	clamped := cp
+	if clamped > winProbCPCap {
+		clamped = winProbCPCap
+	} else if clamped < -winProbCPCap {
+		clamped = -winProbCPCap
+	}
+
+	return 1.0 / (1.0 + math.Exp(-winProbCoeff*float64(clamped)))
+}
+
+// winPercent converts a centipawn evaluation to a win percentage in [0, 100].
+// This is the same as winProb but scaled to the 0–100 range, matching the
+// Lichess accuracy formulas that operate on percentages rather than fractions.
+func winPercent(cp int) float64 {
+	return winProb(cp) * 100.0
 }
 
 // winProbLoss returns the win-probability lost by a move.

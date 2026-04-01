@@ -97,9 +97,9 @@ func parsePGN(pgn string) (gameInfo, error) {
 	for i, move := range moves {
 		pos := positions[i]
 
-		color := "white"
+		color := colorWhite
 		if pos.Turn() == chess.Black {
-			color = "black"
+			color = colorBlack
 		}
 
 		// Compute the full-move number correctly regardless of the starting

@@ -53,8 +53,6 @@ func TestClassify(t *testing.T) {
 			expected:            Book,
 		},
 		// --- Best move cases ---
-		// A large cp loss where the move is still the engine best (played == best)
-		// and no special conditions trigger → Best.
 		{
 			name:        "best move returns Best",
 			scoreBefore: 0, scoreAfter: -50,
@@ -63,7 +61,6 @@ func TestClassify(t *testing.T) {
 			expected:   Best,
 		},
 		// --- Excellent cases (0–2% win-prob loss) ---
-		// From equal (0 cp), a 0 cp change → 0% loss → Excellent.
 		{
 			name:        "zero loss from equal returns Excellent",
 			scoreBefore: 0, scoreAfter: 0,
@@ -71,7 +68,6 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Excellent,
 		},
-		// Positive delta (position improved beyond what best expected) → Excellent.
 		{
 			name:        "positive delta (improvement) returns Excellent",
 			scoreBefore: 0, scoreAfter: 50,
@@ -79,7 +75,7 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Excellent,
 		},
-		// From 0 cp, a 15 cp loss: winProb(0)=0.50, winProb(-15)≈0.481 → loss≈1.9% < 2% → Excellent.
+		// From 0 cp, a 15 cp loss: with Lichess coeff the loss is ~1.4% < 2% → Excellent.
 		{
 			name:        "small cp loss from equal stays Excellent",
 			scoreBefore: 0, scoreAfter: -15,
@@ -88,34 +84,41 @@ func TestClassify(t *testing.T) {
 			expected:   Excellent,
 		},
 		// --- Good cases (2–5% win-prob loss) ---
-		// From 0 cp, a 60 cp loss: winProb(0)=0.50, winProb(-60)≈0.465 → loss≈3.5% → Good.
+		// With the Lichess coefficient, a 30 cp loss from equal gives ~2.7% → Good.
 		{
-			name:        "moderate cp loss from equal returns Good",
-			scoreBefore: 0, scoreAfter: -60,
+			name:        "30 cp loss from equal returns Good",
+			scoreBefore: 0, scoreAfter: -30,
 			playedMove: "d2d4",
 			bestMove:   "e2e4",
 			expected:   Good,
 		},
 		// --- Inaccuracy cases (5–10% win-prob loss) ---
-		// From 0 cp, a 150 cp loss: winProb(0)=0.50, winProb(-150)≈0.407 → loss≈9.3% → Inaccuracy.
+		// With the Lichess coefficient, a 60 cp loss from equal gives ~5.5% → Inaccuracy.
 		{
-			name:        "150 cp loss from equal returns Inaccuracy",
-			scoreBefore: 0, scoreAfter: -150,
+			name:        "60 cp loss from equal returns Inaccuracy",
+			scoreBefore: 0, scoreAfter: -60,
 			playedMove: "d2d4",
 			bestMove:   "e2e4",
 			expected:   Inaccuracy,
 		},
 		// --- Mistake cases (10–20% win-prob loss) ---
-		// From 0 cp, a 300 cp loss: winProb(0)=0.50, winProb(-300)≈0.325 → loss≈17.5% → Mistake.
+		// With the Lichess coefficient, a 150 cp loss from equal gives ~13.5% → Mistake.
 		{
-			name:        "300 cp loss from equal returns Mistake",
-			scoreBefore: 0, scoreAfter: -300,
+			name:        "150 cp loss from equal returns Mistake",
+			scoreBefore: 0, scoreAfter: -150,
 			playedMove: "d2d4",
 			bestMove:   "e2e4",
 			expected:   Mistake,
 		},
 		// --- Blunder cases (>20% win-prob loss) ---
-		// From 0 cp, a 600 cp loss: winProb(0)=0.50, winProb(-600)≈0.269 → loss≈23.1% → Blunder.
+		// With the Lichess coefficient, a 300 cp loss from equal gives ~25.1% → Blunder.
+		{
+			name:        "300 cp loss from equal returns Blunder",
+			scoreBefore: 0, scoreAfter: -300,
+			playedMove: "d2d4",
+			bestMove:   "e2e4",
+			expected:   Blunder,
+		},
 		{
 			name:        "600 cp loss from equal returns Blunder",
 			scoreBefore: 0, scoreAfter: -600,
@@ -131,11 +134,6 @@ func TestClassify(t *testing.T) {
 			expected:   Blunder,
 		},
 		// --- Brilliant move cases ---
-		// All six conditions must hold: isSacrifice, playedMove == bestMove,
-		// scoreAfter >= scoreBefore, scoreBefore < brilliantWinningThreshold,
-		// sacrificedPieceType != chess.NoPieceType, and sacrificedPieceType != chess.Pawn.
-
-		// Engine endorses the sacrifice and position is maintained → Brilliant.
 		{
 			name:        "sacrifice that is the best move with maintained score returns Brilliant",
 			scoreBefore: 50, scoreAfter: 50,
@@ -145,7 +143,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Brilliant,
 		},
-		// Engine endorses and position improves after sacrifice → Brilliant.
 		{
 			name:        "sacrifice that is the best move with improved score returns Brilliant",
 			scoreBefore: 50, scoreAfter: 80,
@@ -155,7 +152,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Brilliant,
 		},
-		// Sacrifice is the engine best but position worsens → falls through to Best.
 		{
 			name:        "sacrifice that is engine best but worsens position returns Best not Brilliant",
 			scoreBefore: 50, scoreAfter: 35,
@@ -165,7 +161,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Best,
 		},
-		// Sacrifice with small cp loss, NOT the engine best → falls through to Excellent.
 		{
 			name:        "sacrifice not the best move returns Excellent not Brilliant",
 			scoreBefore: 50, scoreAfter: 50,
@@ -175,7 +170,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Excellent,
 		},
-		// Sacrifice that is also the engine best → Brilliant takes priority over Best.
 		{
 			name:        "sacrifice that is also engine best returns Brilliant not Best",
 			scoreBefore: 100, scoreAfter: 100,
@@ -185,17 +179,25 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Bishop,
 			expected:            Brilliant,
 		},
-		// Sacrifice with large loss, not best → Inaccuracy (unchanged from before).
+		// Sacrifice with large loss, not best → Mistake (with Lichess coeff,
+		// winProb(50)≈0.519, winProb(-60)≈0.445, loss≈7.4% → was Inaccuracy with
+		// old coeff, but with Lichess coeff winProb(50)≈0.519, winProb(-60)≈0.445,
+		// loss≈7.4% is Inaccuracy; however the actual values with the Lichess coeff
+		// are winProb(50)≈0.519 and winProb(-60)≈0.445, loss≈0.074 → Inaccuracy).
+		// Wait — let me recalculate: winProb(50) = 1/(1+exp(-0.00368208*50)) =
+		// 1/(1+exp(-0.18410)) = 1/(1+0.8318) = 0.5459.
+		// winProb(-60) = 1/(1+exp(0.00368208*60)) = 1/(1+exp(0.22093)) =
+		// 1/(1+1.2472) = 0.4450. Loss = 0.5459 - 0.4450 = 0.1009 → ~10.1% → Mistake.
 		{
-			name:        "sacrifice with large win-prob loss falls through to Inaccuracy (not Brilliant)",
+			name:        "sacrifice with large win-prob loss falls through to Mistake (not Brilliant)",
 			scoreBefore: 50, scoreAfter: -60,
 			playedMove:          "d2d4",
 			bestMove:            "e2e4",
 			isSacrifice:         true,
 			sacrificedPieceType: chess.Knight,
-			expected:            Inaccuracy,
+			expected:            Mistake,
 		},
-		// Brilliant suppressed: scoreBefore=200 (at threshold) → not below threshold → suppressed.
+		// Brilliant suppressed: scoreBefore=200 (at threshold).
 		{
 			name:        "sacrifice suppressed when scoreBefore equals brilliantWinningThreshold (200 cp)",
 			scoreBefore: 200, scoreAfter: 200,
@@ -205,7 +207,7 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Best,
 		},
-		// Brilliant suppressed: scoreBefore=300 > 200 → not Brilliant.
+		// Brilliant suppressed: scoreBefore=300 > 200.
 		{
 			name:        "sacrifice suppressed when position clearly winning (300 cp > 200 threshold)",
 			scoreBefore: 300, scoreAfter: 295,
@@ -215,7 +217,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Excellent,
 		},
-		// Brilliant suppressed: scoreBefore=500.
 		{
 			name:        "sacrifice suppressed when position winning (500 cp)",
 			scoreBefore: 500, scoreAfter: 500,
@@ -225,7 +226,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Rook,
 			expected:            Best,
 		},
-		// Brilliant suppressed: scoreBefore=900.
 		{
 			name:        "sacrifice suppressed when position overwhelmingly winning (900 cp)",
 			scoreBefore: 900, scoreAfter: 900,
@@ -235,7 +235,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Queen,
 			expected:            Best,
 		},
-		// Non-sacrifice with tiny loss → Excellent, not Brilliant.
 		{
 			name:        "non-sacrifice with tiny loss returns Excellent not Brilliant",
 			scoreBefore: 50, scoreAfter: 45,
@@ -244,7 +243,6 @@ func TestClassify(t *testing.T) {
 			isSacrifice: false,
 			expected:    Excellent,
 		},
-		// Pawn sacrifice: all other conditions met but sacrificedPieceType is Pawn → not Brilliant.
 		{
 			name:        "pawn sacrifice is excluded from Brilliant even when all other conditions met",
 			scoreBefore: 50, scoreAfter: 55,
@@ -254,8 +252,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Pawn,
 			expected:            Best,
 		},
-		// NoPieceType sacrifice: IsSacrifice=true but SacrificedPieceType left at zero value → not Brilliant.
-		// This guards against callers that set IsSacrifice without populating SacrificedPieceType.
 		{
 			name:        "sacrifice with NoPieceType is excluded from Brilliant (fail-closed guard)",
 			scoreBefore: 50, scoreAfter: 55,
@@ -267,8 +263,7 @@ func TestClassify(t *testing.T) {
 		},
 		// --- Great move cases (1-ply) ---
 		// Rescue from losing (winProb < 0.40) into equal territory.
-		// scoreBefore=-250 → winProb≈0.349 (<0.40); scoreAfter=0 → winProb=0.50 (≥0.40).
-		// win-prob loss = winProb(-250)-winProb(0) < 0 → clamped to 0 → ≤2% → Great.
+		// With Lichess coeff: winProb(-250) ≈ 0.286 (<0.40); winProb(0) = 0.50 (≥0.40).
 		{
 			name:        "rescue from losing to equal returns Great",
 			scoreBefore: -250, scoreAfter: 0,
@@ -276,8 +271,8 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Great,
 		},
-		// Convert equal to winning: scoreBefore=0 → winProb=0.50 (<0.60); scoreAfter=400 → winProb≈0.731 (≥0.60).
-		// win-prob loss < 0 → clamped to 0 → ≤2% → Great.
+		// Convert equal to winning.
+		// With Lichess coeff: winProb(0) = 0.50 (<0.60); winProb(400) ≈ 0.814 (≥0.60).
 		{
 			name:        "equal to winning conversion returns Great",
 			scoreBefore: 0, scoreAfter: 400,
@@ -285,8 +280,6 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Great,
 		},
-		// Sacrifice AND a turning-point, but NOT the engine's best move → Great takes priority
-		// (Brilliant requires playedMove == bestMove; here they differ).
 		{
 			name:        "sacrifice turning-point without being best move returns Great not Brilliant",
 			scoreBefore: 50, scoreAfter: 400,
@@ -296,7 +289,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Great,
 		},
-		// Sacrifice, turning-point, AND the engine's best move → Brilliant takes priority over Great.
 		{
 			name:        "sacrifice turning-point that is also best move returns Brilliant over Great",
 			scoreBefore: 50, scoreAfter: 400,
@@ -306,7 +298,6 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Knight,
 			expected:            Brilliant,
 		},
-		// Great: rescue from losing, and it is also the best move → Great takes priority over Best.
 		{
 			name:        "turning-point that is also best move returns Great not Best",
 			scoreBefore: -250, scoreAfter: 0,
@@ -315,7 +306,7 @@ func TestClassify(t *testing.T) {
 			expected:   Great,
 		},
 		// Not Great: position was already ≥ greatWinningThreshold before the move.
-		// scoreBefore=400 → winProb≈0.731 (≥0.60) → no swing from outside to inside → not Great.
+		// With Lichess coeff: winProb(400) ≈ 0.814 (≥0.60).
 		{
 			name:        "already winning before move does not trigger Great",
 			scoreBefore: 400, scoreAfter: 600,
@@ -323,8 +314,8 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Excellent,
 		},
-		// Not Great: losing position stays losing → no rescue → Excellent (position improved slightly).
-		// scoreBefore=-300→winProb≈0.321 (<0.40), scoreAfter=-250→winProb≈0.349 (<0.40) → not rescued → not Great.
+		// Not Great: losing → still losing.
+		// With Lichess coeff: winProb(-300) ≈ 0.249 (<0.40), winProb(-250) ≈ 0.286 (<0.40).
 		{
 			name:        "losing to still-losing move is not Great",
 			scoreBefore: -300, scoreAfter: -250,
@@ -333,14 +324,7 @@ func TestClassify(t *testing.T) {
 			expected:   Excellent,
 		},
 		// --- Great move cases (2-ply lookback) ---
-		// ScoreBefore is already winning (≥ greatWinningThreshold), so the 1-ply
-		// Great check does not fire. But two half-moves ago the same player was in
-		// equal territory (< greatWinningThreshold). The player capitalises on the
-		// opponent's intervening blunder → Great via 2-ply lookback.
-		// This replicates move 27 white from the motivating game:
-		//   scoreBefore=411 (already winning), scoreAfter=411 (maintained),
-		//   scoreBeforePrev=108 (equal two half-moves ago).
-		// winProb(108)≈0.567 < 0.60; winProb(411)≈0.737 ≥ 0.60 → equal→winning swing.
+		// With Lichess coeff: winProb(108) ≈ 0.598 (<0.60); winProb(411) ≈ 0.820 (≥0.60).
 		{
 			name:        "capitalise on opponent blunder via 2-ply lookback returns Great",
 			scoreBefore: 411, scoreAfter: 411,
@@ -349,12 +333,7 @@ func TestClassify(t *testing.T) {
 			bestMove:   "c5e6",
 			expected:   Great,
 		},
-		// 2-ply lookback: rescue variant — player was losing two half-moves ago,
-		// opponent blundered into equality, player seizes the resulting equal
-		// position. scoreBefore=50 (equal, already rescued by opponent's blunder),
-		// scoreAfter=50 (maintained, 0% win-prob loss). scoreBeforePrev=-250
-		// → winProb(-250)≈0.349 < 0.40; winProb(50)≈0.531 ≥ 0.40 → losing→equal
-		// swing via 2-ply lookback.
+		// With Lichess coeff: winProb(-250) ≈ 0.286 (<0.40); winProb(50) ≈ 0.519 (≥0.40).
 		{
 			name:        "2-ply lookback rescue from losing via opponent blunder returns Great",
 			scoreBefore: 50, scoreAfter: 50,
@@ -363,8 +342,6 @@ func TestClassify(t *testing.T) {
 			bestMove:   "e2e4",
 			expected:   Great,
 		},
-		// No lookback when hasPrev is false — should not trigger 2-ply Great even
-		// if scoreBeforePrev would qualify if it were used.
 		{
 			name:        "2-ply lookback suppressed when hasPrev is false",
 			scoreBefore: 411, scoreAfter: 411,
@@ -373,9 +350,7 @@ func TestClassify(t *testing.T) {
 			bestMove:   "c5e6",
 			expected:   Best,
 		},
-		// 2-ply lookback does not fire when the player was already winning two
-		// half-moves ago (scoreBeforePrev ≥ greatWinningThreshold).
-		// winProb(400)≈0.731 ≥ 0.60 → already winning previously → no new swing.
+		// With Lichess coeff: winProb(400) ≈ 0.814 (≥0.60) → already winning.
 		{
 			name:        "2-ply lookback does not fire when player was already winning two moves ago",
 			scoreBefore: 500, scoreAfter: 500,
@@ -447,10 +422,12 @@ func TestWinProb(t *testing.T) {
 		wantMax float64
 	}{
 		{name: "equal position is 0.50", cp: 0, wantMin: 0.50, wantMax: 0.50},
-		{name: "+400 cp is ~0.731", cp: 400, wantMin: 0.72, wantMax: 0.74},
-		{name: "-400 cp is ~0.269", cp: -400, wantMin: 0.26, wantMax: 0.28},
-		{name: "+inf tends to 1.0", cp: 10000, wantMin: 0.999, wantMax: 1.0},
-		{name: "-inf tends to 0.0", cp: -10000, wantMin: 0.0, wantMax: 0.001},
+		// With Lichess coeff: winProb(400) ≈ 0.814.
+		{name: "+400 cp is ~0.81", cp: 400, wantMin: 0.80, wantMax: 0.83},
+		{name: "-400 cp is ~0.19", cp: -400, wantMin: 0.17, wantMax: 0.20},
+		// Capped at ±1000: winProb(1000) ≈ 0.976.
+		{name: "+10000 capped to +1000 near 0.976", cp: 10000, wantMin: 0.97, wantMax: 0.98},
+		{name: "-10000 capped to -1000 near 0.024", cp: -10000, wantMin: 0.02, wantMax: 0.03},
 	}
 
 	for _, tt := range tests {
@@ -458,6 +435,31 @@ func TestWinProb(t *testing.T) {
 			t.Parallel()
 
 			got := winProb(tt.cp)
+			assert.GreaterOrEqual(t, got, tt.wantMin)
+			assert.LessOrEqual(t, got, tt.wantMax)
+		})
+	}
+}
+
+func TestWinPercent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cp      int
+		wantMin float64
+		wantMax float64
+	}{
+		{name: "equal position is 50.0", cp: 0, wantMin: 50.0, wantMax: 50.0},
+		{name: "+400 cp is ~81.4", cp: 400, wantMin: 80.0, wantMax: 83.0},
+		{name: "-400 cp is ~18.6", cp: -400, wantMin: 17.0, wantMax: 20.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := winPercent(tt.cp)
 			assert.GreaterOrEqual(t, got, tt.wantMin)
 			assert.LessOrEqual(t, got, tt.wantMax)
 		})
@@ -485,9 +487,10 @@ func TestWinProbLoss(t *testing.T) {
 			wantMin: 0.0, wantMax: 0.0,
 		},
 		{
-			name:        "loss from equal to -300 cp is ~17.5%",
+			// With Lichess coeff: winProb(0)=0.50, winProb(-300)≈0.249 → loss≈0.251.
+			name:        "loss from equal to -300 cp is ~25.1%",
 			scoreBefore: 0, scoreAfter: -300,
-			wantMin: 0.17, wantMax: 0.18,
+			wantMin: 0.24, wantMax: 0.26,
 		},
 	}
 
@@ -525,4 +528,14 @@ func TestWinProbMonotonic(t *testing.T) {
 		assert.Greater(t, got, prev, "winProb not monotonically increasing at cp=%d", cp)
 		prev = got
 	}
+}
+
+// TestWinProbClamped verifies that values beyond ±1000 are capped.
+func TestWinProbClamped(t *testing.T) {
+	t.Parallel()
+
+	assert.InDelta(t, winProb(1000), winProb(5000), 1e-12,
+		"winProb should clamp values > 1000")
+	assert.InDelta(t, winProb(-1000), winProb(-5000), 1e-12,
+		"winProb should clamp values < -1000")
 }
