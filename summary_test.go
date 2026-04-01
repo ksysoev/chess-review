@@ -420,9 +420,10 @@ func TestGameAccuracy_AllPerfect(t *testing.T) {
 	t.Parallel()
 
 	accs := []float64{100, 100, 100, 100, 100}
-	wps := []float64{50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50}
+	// Equal weights — all plies have the same volatility.
+	weights := []float64{0.5, 0.5, 0.5, 0.5, 0.5}
 
-	got := gameAccuracy(accs, wps)
+	got := gameAccuracy(accs, weights)
 	assert.InDelta(t, 100.0, got, 0.1)
 }
 
@@ -430,8 +431,9 @@ func TestGameAccuracy_SingleMove(t *testing.T) {
 	t.Parallel()
 
 	accs := []float64{75.0}
-	wps := []float64{50, 50, 45}
+	// Single-move case: weights are ignored (function returns accs[0] directly).
+	weights := []float64{0.5}
 
-	got := gameAccuracy(accs, wps)
+	got := gameAccuracy(accs, weights)
 	assert.InDelta(t, 75.0, got, 0.1)
 }

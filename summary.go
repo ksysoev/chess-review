@@ -118,18 +118,34 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 		phaseAccuracies [numPhases][]float64
 		// All per-move accuracies (for overall game accuracy).
 		allAccuracies []float64
-		// Win percentages from White's perspective, used to build the volatility
-		// sliding windows. Starts with the initial position eval.
-		whiteWinPercents []float64
-		counts           [numClassifications]int
+		// Volatility weights, one per entry in allAccuracies.
+		// Derived from the shared all-ply win% series via computePlyWeights.
+		allWeights []float64
+		counts     [numClassifications]int
 	}
+
+	// Build a single combined win-percent series (White's perspective) that
+	// covers every ply in order, matching the Lichess algorithm exactly.
+	// The series starts with the initial-position evaluation and appends one
+	// entry per move (the win% after the move, from White's perspective).
+	allWPs := make([]float64, 0, len(reviews)+1)
+	allWPs = append(allWPs, winPercent(initialPositionCP))
+
+	for _, r := range reviews {
+		switch r.Color {
+		case colorWhite:
+			allWPs = append(allWPs, winPercent(r.ScoreAfter))
+		case colorBlack:
+			allWPs = append(allWPs, 100.0-winPercent(r.ScoreAfter))
+		}
+	}
+
+	// Pre-compute one volatility weight per ply from the shared series.
+	plyWeights := computePlyWeights(allWPs, len(reviews))
 
 	var white, black playerAccum
 
-	white.whiteWinPercents = []float64{winPercent(initialPositionCP)}
-	black.whiteWinPercents = []float64{winPercent(initialPositionCP)}
-
-	for _, r := range reviews {
+	for i, r := range reviews {
 		var acc *playerAccum
 
 		switch r.Color {
@@ -164,26 +180,16 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 		wpBefore := winPercent(r.ScoreBefore)
 		wpAfter := winPercent(r.ScoreAfter)
 
-		// Build the all-positions win% list from White's perspective for
-		// the sliding-window volatility calculation. Only moves that
-		// contribute an accuracy entry also contribute win-percent entries,
-		// keeping the two slices aligned for gameAccuracy().
-		var whiteWPBefore, whiteWPAfter float64
-		if r.Color == colorWhite {
-			whiteWPBefore = wpBefore
-			whiteWPAfter = wpAfter
-		} else {
-			whiteWPBefore = 100.0 - wpBefore
-			whiteWPAfter = 100.0 - wpAfter
-		}
-
-		acc.whiteWinPercents = append(acc.whiteWinPercents, whiteWPBefore, whiteWPAfter)
-
 		ma := moveAccuracy(wpBefore, wpAfter)
 
 		phase := phaseOf(r.MoveNumber)
 		acc.phaseAccuracies[phase] = append(acc.phaseAccuracies[phase], ma)
 		acc.allAccuracies = append(acc.allAccuracies, ma)
+
+		// Attach the pre-computed weight for this ply.
+		if i < len(plyWeights) {
+			acc.allWeights = append(acc.allWeights, plyWeights[i])
+		}
 	}
 
 	return GameSummary{
@@ -191,9 +197,35 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 		BlackPlayer:  blackName,
 		OpeningCode:  openingCode,
 		OpeningTitle: openingTitle,
-		White:        buildPlayerSummary(&white.counts, white.phaseAccuracies, white.allAccuracies, white.whiteWinPercents),
-		Black:        buildPlayerSummary(&black.counts, black.phaseAccuracies, black.allAccuracies, black.whiteWinPercents),
+		White:        buildPlayerSummary(&white.counts, white.phaseAccuracies, white.allAccuracies, white.allWeights),
+		Black:        buildPlayerSummary(&black.counts, black.phaseAccuracies, black.allAccuracies, black.allWeights),
 	}
+}
+
+// computePlyWeights builds one volatility weight per ply from the combined
+// all-ply win-percent series. It mirrors the Lichess sliding-window logic:
+// window size = clamp(n/10, 2, 8), padded for early plies.
+func computePlyWeights(allWPs []float64, n int) []float64 {
+	if n == 0 {
+		return nil
+	}
+
+	windowSize := n / 10
+	if windowSize < slidingWindowMinSize {
+		windowSize = slidingWindowMinSize
+	} else if windowSize > slidingWindowMaxSize {
+		windowSize = slidingWindowMaxSize
+	}
+
+	windows := buildSlidingWindows(allWPs, windowSize, n)
+	weights := make([]float64, n)
+
+	for i, w := range windows {
+		sd := standardDeviation(w)
+		weights[i] = math.Max(volatilityWeightMin, math.Min(volatilityWeightMax, sd))
+	}
+
+	return weights
 }
 
 // buildPlayerSummary assembles a PlayerSummary from accumulated data.
@@ -201,7 +233,7 @@ func buildPlayerSummary(
 	counts *[numClassifications]int,
 	phaseAccuracies [numPhases][]float64,
 	allAccuracies []float64,
-	whiteWinPercents []float64,
+	allWeights []float64,
 ) PlayerSummary {
 	var phaseAcc [numPhases]float64
 
@@ -217,7 +249,7 @@ func buildPlayerSummary(
 	if len(allAccuracies) == 0 {
 		overallAcc = math.NaN()
 	} else {
-		overallAcc = gameAccuracy(allAccuracies, whiteWinPercents)
+		overallAcc = gameAccuracy(allAccuracies, allWeights)
 	}
 
 	return PlayerSummary{
@@ -266,17 +298,13 @@ func moveAccuracy(wpBefore, wpAfter float64) float64 {
 // gameAccuracy computes the overall game accuracy using the Lichess
 // sliding-window volatility-weighted algorithm.
 //
-// Algorithm:
-//  1. Determine window size = clamp(len(accuracies)/10, 2, 8).
-//  2. Build sliding windows of win-percent values; the first (windowSize-2)
-//     windows are padded copies of the first real window.
-//  3. For each window, compute weight = clamp(stddev(window), 0.5, 12.0).
-//  4. Compute the volatility-weighted arithmetic mean of per-move accuracies.
-//  5. Also compute the harmonic mean of per-move accuracies.
-//  6. Return the average of (weighted mean, harmonic mean).
+// It expects pre-computed per-move volatility weights (one per accuracy entry)
+// produced by computePlyWeights. The overall accuracy is the average of:
+//   - the volatility-weighted arithmetic mean of per-move accuracies, and
+//   - the harmonic mean of per-move accuracies.
 //
 // Source: https://github.com/lichess-org/lila/blob/master/modules/analyse/src/main/scala/AccuracyPercent.scala
-func gameAccuracy(accuracies, whiteWinPercents []float64) float64 {
+func gameAccuracy(accuracies, weights []float64) float64 {
 	n := len(accuracies)
 	if n == 0 {
 		return math.NaN()
@@ -286,35 +314,9 @@ func gameAccuracy(accuracies, whiteWinPercents []float64) float64 {
 		return accuracies[0]
 	}
 
-	// Step 1: window size.
-	windowSize := n / 10
-	if windowSize < slidingWindowMinSize {
-		windowSize = slidingWindowMinSize
-	} else if windowSize > slidingWindowMaxSize {
-		windowSize = slidingWindowMaxSize
-	}
-
-	// Step 2: build sliding windows from the win-percent series.
-	// Each window covers [i, i+windowSize) of the whiteWinPercents.
-	// We need exactly n weights (one per move accuracy).
-	windows := buildSlidingWindows(whiteWinPercents, windowSize, n)
-
-	// Step 3: compute per-window volatility weights.
-	weights := make([]float64, n)
-
-	for i, w := range windows {
-		sd := standardDeviation(w)
-		weight := math.Max(volatilityWeightMin, math.Min(volatilityWeightMax, sd))
-		weights[i] = weight
-	}
-
-	// Step 4: volatility-weighted arithmetic mean.
 	wm := weightedMean(accuracies, weights)
-
-	// Step 5: harmonic mean.
 	hm := harmonicMean(accuracies)
 
-	// Step 6: average of the two.
 	return (wm + hm) / 2.0
 }
 
@@ -353,6 +355,10 @@ func buildSlidingWindows(values []float64, windowSize, n int) [][]float64 {
 func safeSlice(values []float64, start, end int) []float64 {
 	if start < 0 {
 		start = 0
+	}
+
+	if start > len(values) {
+		start = len(values)
 	}
 
 	if end > len(values) {
