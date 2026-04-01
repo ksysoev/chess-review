@@ -25,25 +25,57 @@ const (
 
 // MoveEvaluation holds the engine's evaluation for a single candidate move.
 type MoveEvaluation struct {
+	// MateIn is non-nil when this candidate leads to a forced-mate sequence.
+	// Positive means the side to move mates in that many moves; negative means
+	// they are being mated in that many moves. Nil when no forced mate is found.
 	MateIn *int
-	Move   string
-	Score  int
+	// Move is the candidate move in UCI notation (e.g. "e2e4").
+	Move string
+	// Score is the centipawn evaluation from the side-to-move perspective.
+	Score int
 }
 
 // MoveReview holds the analysis result for a single half-move (ply).
 type MoveReview struct {
-	MateInBefore   *int
-	MateInAfter    *int
-	PlayedMove     string
-	Color          string
+	// MateInBefore is non-nil when the position before this move has a forced-mate
+	// sequence. Positive means the side to move can force checkmate in that many
+	// moves; negative means they are being mated in that many moves.
+	MateInBefore *int
+	// MateInAfter is non-nil when the position after this move has a forced-mate
+	// sequence, expressed from the perspective of the side that just moved.
+	// Positive means the side that just moved can still force checkmate in that many
+	// moves; negative means the opponent now has the forced mate in that many moves.
+	MateInAfter *int
+	// PlayedMove is the move that was actually played, in UCI notation (e.g. "e2e4").
+	PlayedMove string
+	// Color is the side that played: "white" or "black".
+	Color string
+	// TopMoves is the engine's ordered list of candidate moves for the position
+	// before this move was played (i.e. the pre-move position). TopMoves[0] is
+	// always PV1 — the best continuation at the configured depth. The length is
+	// controlled by WithTopMoves (default 3).
 	TopMoves       []MoveEvaluation
 	Classification Classification
-	ScoreBefore    int
-	ScoreAfter     int
-	ScoreDelta     int
-	MoveNumber     int
-	IsSacrifice    bool
-	IsBook         bool
+	// ScoreBefore is the centipawn evaluation before the move, from the perspective
+	// of the side to move.
+	ScoreBefore int
+	// ScoreAfter is the centipawn evaluation after the move, from the perspective
+	// of the side that just moved (negated from the engine's output so both
+	// ScoreBefore and ScoreAfter share the same reference frame).
+	ScoreAfter int
+	// ScoreDelta is the change in centipawns (ScoreAfter - ScoreBefore).
+	// Negative values indicate centipawn loss.
+	ScoreDelta int
+	// MoveNumber is the full-move number (1-indexed; increments after Black's move).
+	MoveNumber int
+	// IsSacrifice is true when the move was detected as a material sacrifice:
+	// the moved piece's value exceeds what was captured, and the opponent had
+	// at least one legal recapture on the destination square.
+	IsSacrifice bool
+	// IsBook is true when the move is part of a known ECO opening line.
+	// Book moves take priority over engine-based classifications and are
+	// excluded from accuracy calculations.
+	IsBook bool
 }
 
 // GameResult holds the full output of a game review: per-move analysis and an
@@ -273,8 +305,7 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 	// pvExact tracks the latest *exact* score for each MultiPV index so we
 	// can prefer it over bound scores at the end, matching the single-PV logic.
 	type pvEntry struct {
-		eval     MoveEvaluation
-		hasExact bool
+		eval MoveEvaluation
 	}
 
 	pvAny := make(map[int]*pvEntry)
@@ -315,8 +346,7 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 		pvAny[pvIdx] = entry
 
 		if info.Score.Bound == stockfish.ScoreBoundExact {
-			exact := &pvEntry{eval: MoveEvaluation{Move: move, Score: score, MateIn: mateIn}, hasExact: true}
-			pvExact[pvIdx] = exact
+			pvExact[pvIdx] = &pvEntry{eval: MoveEvaluation{Move: move, Score: score, MateIn: mateIn}}
 		}
 	}
 
@@ -373,6 +403,14 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 
 	if len(result) == 0 {
 		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
+	}
+
+	// Enforce that result[0] is always PV1. If the engine emitted info lines for
+	// PV2+ but never for PV1, the loop above skips index 1 and result[0] would
+	// silently be the second-best candidate. reviewFromGameInfo relies on
+	// result[0] being the best continuation for ScoreBefore/BestMove/MateInBefore.
+	if _, hasPV1 := pvAny[1]; !hasPV1 {
+		return nil, &ErrEngineFailure{Reason: "engine returned no PV1 evaluation"}
 	}
 
 	return result, nil
