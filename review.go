@@ -23,6 +23,18 @@ const (
 	colorBlack = "black"
 )
 
+// MoveEvaluation holds the engine's evaluation for a single candidate move.
+type MoveEvaluation struct {
+	// MateIn is non-nil when this candidate leads to a forced-mate sequence.
+	// Positive means the side to move mates in that many moves; negative means
+	// they are being mated in that many moves. Nil when no forced mate is found.
+	MateIn *int
+	// Move is the candidate move in UCI notation (e.g. "e2e4").
+	Move string
+	// Score is the centipawn evaluation from the side-to-move perspective.
+	Score int
+}
+
 // MoveReview holds the analysis result for a single half-move (ply).
 type MoveReview struct {
 	// MateInBefore is non-nil when the position before this move has a forced-mate
@@ -36,12 +48,26 @@ type MoveReview struct {
 	MateInAfter *int
 	// PlayedMove is the move that was actually played, in UCI notation (e.g. "e2e4").
 	PlayedMove string
-	// BestMove is the engine's top-recommended move at the given depth.
-	BestMove string
 	// Color is the side that played: "white" or "black".
 	Color string
-	// Classification is the quality rating of the played move.
+	// TopMoves is the engine's ordered list of candidate moves for the position
+	// before this move was played (i.e. the pre-move position). TopMoves[0] is
+	// always PV1 — the best continuation at the configured depth. The length is
+	// controlled by WithTopMoves (default 3).
+	TopMoves       []MoveEvaluation
 	Classification Classification
+	// ScoreBefore is the centipawn evaluation before the move, from the perspective
+	// of the side to move.
+	ScoreBefore int
+	// ScoreAfter is the centipawn evaluation after the move, from the perspective
+	// of the side that just moved (negated from the engine's output so both
+	// ScoreBefore and ScoreAfter share the same reference frame).
+	ScoreAfter int
+	// ScoreDelta is the change in centipawns (ScoreAfter - ScoreBefore).
+	// Negative values indicate centipawn loss.
+	ScoreDelta int
+	// MoveNumber is the full-move number (1-indexed; increments after Black's move).
+	MoveNumber int
 	// IsSacrifice is true when the move was detected as a material sacrifice:
 	// the moved piece's value exceeds what was captured, and the opponent had
 	// at least one legal recapture on the destination square.
@@ -50,17 +76,6 @@ type MoveReview struct {
 	// Book moves take priority over engine-based classifications and are
 	// excluded from accuracy calculations.
 	IsBook bool
-	// ScoreBefore is the centipawn evaluation before the move, from the perspective
-	// of the side to move.
-	ScoreBefore int
-	// ScoreAfter is the centipawn evaluation after the move, from the perspective
-	// of the side that just moved (negated to match same reference frame).
-	ScoreAfter int
-	// ScoreDelta is the change in centipawns (ScoreAfter - ScoreBefore).
-	// Negative values indicate centipawn loss.
-	ScoreDelta int
-	// MoveNumber is the full-move number (1-indexed; increments after Black's move).
-	MoveNumber int
 }
 
 // GameResult holds the full output of a game review: per-move analysis and an
@@ -162,7 +177,7 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 	playedSoFar := make([]string, 0, len(gi.Moves))
 
 	// Evaluate the initial position once before the loop.
-	currentScore, bestMove, currentMateIn, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
+	currentTopMoves, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 	if analyzeErr != nil {
 		return nil, analyzeErr
 	}
@@ -175,28 +190,30 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 	hasPrev := map[string]bool{}
 
 	for _, mv := range gi.Moves {
-		scoreBefore := currentScore
-		thisBestMove := bestMove
-		mateInBefore := currentMateIn
+		// Extract score, best move, and mate distance from the top PV of the
+		// position before this move was played.
+		scoreBefore := currentTopMoves[0].Score
+		thisBestMove := currentTopMoves[0].Move
+		mateInBefore := currentTopMoves[0].MateIn
 
 		playedSoFar = append(playedSoFar, mv.UCIMove)
 
-		nextScore, nextBestMove, nextMateIn, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
+		nextTopMoves, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 		if analyzeErr != nil {
 			return nil, analyzeErr
 		}
 
 		// Negate nextScore: after the move Stockfish evaluates from the opponent's
 		// perspective, so we flip the sign to keep it in the played-side's frame.
-		scoreAfterFromPlayedSide := -nextScore
+		scoreAfterFromPlayedSide := -nextTopMoves[0].Score
 		delta := scoreAfterFromPlayedSide - scoreBefore
 
 		// Flip nextMateIn into the played side's frame: if the opponent now has
 		// mate-in-N (positive from their POV), that is -N from the played side.
 		var mateInAfter *int
 
-		if nextMateIn != nil {
-			v := -*nextMateIn
+		if nextTopMoves[0].MateIn != nil {
+			v := -*nextTopMoves[0].MateIn
 			mateInAfter = &v
 		}
 
@@ -214,7 +231,7 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 
 		mr := MoveReview{
 			PlayedMove:     mv.UCIMove,
-			BestMove:       thisBestMove,
+			TopMoves:       currentTopMoves,
 			Color:          mv.Color,
 			MoveNumber:     mv.MoveNumber,
 			ScoreBefore:    scoreBefore,
@@ -243,11 +260,9 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 
 		// Carry forward: the opponent's next "before" score is -nextScore from
 		// their perspective (already done via the negation above), but for the
-		// next iteration currentScore must be in the next side-to-move's frame,
-		// which is exactly nextScore as returned by the engine.
-		currentScore = nextScore
-		bestMove = nextBestMove
-		currentMateIn = nextMateIn
+		// next iteration currentTopMoves must be in the next side-to-move's frame,
+		// which is exactly nextTopMoves as returned by the engine.
+		currentTopMoves = nextTopMoves
 	}
 
 	return reviews, nil
@@ -255,45 +270,48 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 
 // analyzePosition sets the engine position to the given sequence of UCI moves
 // starting from initialFEN, runs a depth-limited search, and returns the
-// centipawn score, best move, and forced-mate distance (if any).
+// candidate moves ranked from best to worst. The number of candidates is
+// controlled by cfg.topMoves (the MultiPV engine setting).
 //
 // initialFEN must be a valid FEN string (typically the first position of the
 // parsed game). Using the game's actual starting FEN rather than always
 // stockfish.StartPosition ensures correctness for PGNs with SetUp/FEN headers.
 //
-// mateIn is non-nil when the engine reports a forced-mate sequence: positive
-// means the side to move mates in that many moves, negative means they are
-// being mated. Mate scores are also mapped to ±mateScoreSentinel in the
-// returned centipawn score so that downstream arithmetic remains meaningful.
+// Each MoveEvaluation carries the centipawn score from the side-to-move's
+// perspective and, when a forced-mate sequence is present, a non-nil MateIn.
+// Mate scores are also mapped to ±mateScoreSentinel so that downstream
+// arithmetic remains meaningful. Exact scores are preferred over bound scores.
+//
 // Returns ErrEngineFailure if the engine stream closes without ever producing
-// a best move.
-func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves []string) (score int, bestMove string, mateIn *int, err error) {
+// a best move, or if the result contains no evaluations.
+func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves []string) ([]MoveEvaluation, error) {
 	pos := stockfish.FENPosition(initialFEN)
 	if len(moves) > 0 {
 		pos = pos.WithMoves(moves...)
 	}
 
 	if setErr := r.engine.SetPosition(pos); setErr != nil {
-		return 0, "", nil, &ErrEngineFailure{Cause: setErr, Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
+		return nil, &ErrEngineFailure{Cause: setErr, Reason: fmt.Sprintf("set position failed: %s", setErr.Error())}
 	}
 
 	ch, goErr := r.engine.Go(ctx, &stockfish.SearchParams{Depth: r.cfg.depth})
 	if goErr != nil {
-		return 0, "", nil, &ErrEngineFailure{Cause: goErr, Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
+		return nil, &ErrEngineFailure{Cause: goErr, Reason: fmt.Sprintf("go command failed: %s", goErr.Error())}
 	}
 
 	bestMoveFound := false
 
-	// lastExactScore and lastExactMateIn track the most recent info line that
-	// carried an exact (non-bound) score. We prefer exact scores over lowerbound
-	// or upperbound values because bound scores are only guaranteed to be one
-	// side of the true minimax value; using them would introduce measurement
-	// error into per-move CPL and therefore accuracy/game-rating calculations.
-	var (
-		lastExactScore  int
-		lastExactMateIn *int
-		hasExact        bool
-	)
+	// pvAny tracks the latest score seen for each MultiPV index (1-based).
+	// pvExact tracks the latest *exact* score for each MultiPV index so we
+	// can prefer it over bound scores at the end, matching the single-PV logic.
+	type pvEntry struct {
+		eval MoveEvaluation
+	}
+
+	pvAny := make(map[int]*pvEntry)
+	pvExact := make(map[int]*pvEntry)
+
+	var bestMove string
 
 	for info := range ch {
 		if info.IsBestMove {
@@ -303,34 +321,99 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 			break
 		}
 
-		// Always track the latest score as the fallback.
+		// Treat MultiPV==0 (field absent) as index 1.
+		pvIdx := info.MultiPV
+		if pvIdx == 0 {
+			pvIdx = 1
+		}
+
+		var mateIn *int
+
 		if info.Score.Type == stockfish.ScoreTypeMate {
 			n := info.Score.Value
 			mateIn = &n
-		} else {
-			mateIn = nil
 		}
 
-		score = normalizeScore(info.Score)
+		score := normalizeScore(info.Score)
 
-		// Additionally track the last score that was exact so we can prefer it.
+		move := ""
+		if len(info.PV) > 0 {
+			move = info.PV[0]
+		}
+
+		entry := &pvEntry{eval: MoveEvaluation{Move: move, Score: score, MateIn: mateIn}}
+
+		pvAny[pvIdx] = entry
+
 		if info.Score.Bound == stockfish.ScoreBoundExact {
-			lastExactScore = score
-			lastExactMateIn = mateIn
-			hasExact = true
+			pvExact[pvIdx] = &pvEntry{eval: MoveEvaluation{Move: move, Score: score, MateIn: mateIn}}
 		}
 	}
 
 	if !bestMoveFound {
-		return 0, "", nil, &ErrEngineFailure{Reason: "engine returned no best move"}
+		return nil, &ErrEngineFailure{Reason: "engine returned no best move"}
 	}
 
-	// Prefer the last exact score over any bound score seen last.
-	if hasExact {
-		return lastExactScore, bestMove, lastExactMateIn, nil
+	// Build the result slice ordered by PV index 1..N.
+	// Prefer exact scores; fall back to any score seen for that PV.
+	// For PV 1, the bestmove line is authoritative for the move itself
+	// (covers engines / mocks that do not include a pv token in info lines).
+	//
+	// Use the maximum observed key rather than len(pvAny): if the engine emits
+	// sparse MultiPV indexes (e.g. PV1 and PV3 but no PV2), len(pvAny) equals
+	// the count of entries (2) while the highest index is 3, so the len-based
+	// loop would silently drop higher-index PVs.  Cap at cfg.topMoves to
+	// discard any unexpected extra PVs the engine might return.
+	maxPV := 0
+	for idx := range pvAny {
+		if idx > maxPV {
+			maxPV = idx
+		}
 	}
 
-	return score, bestMove, mateIn, nil
+	if maxPV > r.cfg.topMoves {
+		maxPV = r.cfg.topMoves
+	}
+
+	if maxPV == 0 {
+		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
+	}
+
+	result := make([]MoveEvaluation, 0, maxPV)
+
+	for i := 1; i <= maxPV; i++ {
+		var chosen MoveEvaluation
+
+		if e, ok := pvExact[i]; ok {
+			chosen = e.eval
+		} else if e, ok := pvAny[i]; ok {
+			chosen = e.eval
+		} else {
+			continue
+		}
+
+		// For PV 1 the engine's bestmove line is the authoritative source for the
+		// top move. Use it when the info lines did not carry a pv token.
+		if i == 1 && chosen.Move == "" {
+			chosen.Move = bestMove
+		}
+
+		result = append(result, chosen)
+	}
+
+	if len(result) == 0 {
+		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
+	}
+
+	// Enforce that result[0] is always PV1. If the engine emitted info lines for
+	// PV2+ but never for PV1, the loop above skips index 1 and result[0] would
+	// silently be the second-best candidate. reviewFromGameInfo relies on
+	// result[0] being the best continuation for ScoreBefore/BestMove/MateInBefore.
+	if _, hasPV1 := pvAny[1]; !hasPV1 {
+		return nil, &ErrEngineFailure{Reason: "engine returned no PV1 evaluation"}
+	}
+
+	return result, nil
 }
 
 // normalizeScore converts a stockfish Score to a centipawn integer.
@@ -354,6 +437,7 @@ func (r *Reviewer) applyEngineOptions() error {
 	err := r.engine.Apply(
 		stockfish.WithThreads(r.cfg.threads),
 		stockfish.WithHash(r.cfg.hashMB),
+		stockfish.WithMultiPV(r.cfg.topMoves),
 	)
 	if err != nil {
 		return &ErrEngineFailure{Cause: err, Reason: fmt.Sprintf("failed to apply engine options: %s", err.Error())}

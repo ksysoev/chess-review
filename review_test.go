@@ -109,6 +109,17 @@ func makeExactInfo(score int) stockfish.SearchInfo {
 	}
 }
 
+// makeMultiPVInfo returns a non-bestmove SearchInfo for MultiPV mode with the
+// given PV index, exact centipawn score, and top move in the PV list.
+func makeMultiPVInfo(pvIdx, score int, move string) stockfish.SearchInfo {
+	return stockfish.SearchInfo{
+		MultiPV: pvIdx,
+		Score:   stockfish.Score{Value: score, Type: stockfish.ScoreTypeCentipawns, Bound: stockfish.ScoreBoundExact},
+		PV:      []string{move},
+		Depth:   1,
+	}
+}
+
 func TestReviewer_ReviewGame_TwoMoves(t *testing.T) {
 	t.Parallel()
 
@@ -143,14 +154,14 @@ func TestReviewer_ReviewGame_TwoMoves(t *testing.T) {
 
 	// White's e4: ECO book move → Book (book classification takes priority).
 	assert.Equal(t, "e2e4", reviews[0].PlayedMove)
-	assert.Equal(t, "e2e4", reviews[0].BestMove)
+	assert.Equal(t, "e2e4", reviews[0].TopMoves[0].Move)
 	assert.Equal(t, "white", reviews[0].Color)
 	assert.Equal(t, 1, reviews[0].MoveNumber)
 	assert.Equal(t, Book, reviews[0].Classification)
 
 	// Black's e5: ECO book move → Book.
 	assert.Equal(t, "e7e5", reviews[1].PlayedMove)
-	assert.Equal(t, "e7e5", reviews[1].BestMove)
+	assert.Equal(t, "e7e5", reviews[1].TopMoves[0].Move)
 	assert.Equal(t, "black", reviews[1].Color)
 	assert.Equal(t, 1, reviews[1].MoveNumber)
 	assert.Equal(t, Book, reviews[1].Classification)
@@ -290,6 +301,16 @@ func TestNew_InvalidOptions(t *testing.T) {
 			name:   "negative hash",
 			opt:    WithHash(-16),
 			errMsg: "invalid hash size",
+		},
+		{
+			name:   "zero top moves",
+			opt:    WithTopMoves(0),
+			errMsg: "invalid top moves",
+		},
+		{
+			name:   "negative top moves",
+			opt:    WithTopMoves(-1),
+			errMsg: "invalid top moves",
 		},
 	}
 
@@ -1121,4 +1142,66 @@ func TestReviewer_ReviewGameFullStream_ZeroValue(t *testing.T) {
 
 	_, ok = <-summariesCh
 	assert.False(t, ok, "summary channel should be closed")
+}
+
+// TestReviewer_ReviewGame_MultiPV verifies that TopMoves on each MoveReview
+// contains all candidate moves returned by the engine when MultiPV > 1, ordered
+// by PV index from best to worst, with correct scores.
+func TestReviewer_ReviewGame_MultiPV(t *testing.T) {
+	t.Parallel()
+
+	// Use a SetUp FEN with the standard starting position.
+	// Note: detectOpenings will still run (the FEN matches the standard start
+	// prefix), so 1.d4 may be classified as a book move. This test focuses on
+	// MultiPV evaluation (TopMoves ordering and scores), not on book detection.
+	const pgn = `[Event "Test"]
+[Result "*"]
+[SetUp "1"]
+[FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]
+
+1. d4 *`
+
+	// 1 half-move → 2 analyzePosition calls.
+	//   call 0 (initial, white to move): 3 PVs
+	//     PV1: d2d4, score=30
+	//     PV2: e2e4, score=20
+	//     PV3: c2c4, score=15
+	//   call 1 (after d4, black to move): 3 PVs — only used to drive next iteration.
+	//     PV1: d7d5, score=25
+	//     PV2: g8f6, score=20
+	//     PV3: e7e6, score=18
+	batches := [][]stockfish.SearchInfo{
+		{
+			makeMultiPVInfo(1, 30, "d2d4"),
+			makeMultiPVInfo(2, 20, "e2e4"),
+			makeMultiPVInfo(3, 15, "c2c4"),
+			makeBestMoveInfo("d2d4"),
+		},
+		{
+			makeMultiPVInfo(1, 25, "d7d5"),
+			makeMultiPVInfo(2, 20, "g8f6"),
+			makeMultiPVInfo(3, 18, "e7e6"),
+			makeBestMoveInfo("d7d5"),
+		},
+	}
+
+	r := &Reviewer{engine: &batchMockEngine{batches: batches}, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+
+	top := reviews[0].TopMoves
+	require.Len(t, top, 3, "expected 3 top moves from MultiPV")
+
+	assert.Equal(t, "d2d4", top[0].Move)
+	assert.Equal(t, 30, top[0].Score)
+	assert.Nil(t, top[0].MateIn)
+
+	assert.Equal(t, "e2e4", top[1].Move)
+	assert.Equal(t, 20, top[1].Score)
+
+	assert.Equal(t, "c2c4", top[2].Move)
+	assert.Equal(t, 15, top[2].Score)
 }

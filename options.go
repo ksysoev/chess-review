@@ -13,13 +13,18 @@ const (
 	// DefaultHashMB is the default transposition table size in megabytes.
 	// It is exported so that callers (e.g. a CLI) can use it as their own default.
 	DefaultHashMB = 16
+	// DefaultTopMoves is the default number of candidate moves (principal
+	// variations) the engine evaluates per position. It is exported so that
+	// callers (e.g. a CLI) can use it as their own default.
+	DefaultTopMoves = 3
 )
 
 // config holds internal configuration for a Reviewer.
 type config struct {
-	depth   int
-	threads int
-	hashMB  int
+	depth    int
+	threads  int
+	hashMB   int
+	topMoves int
 }
 
 // Option is a functional option for configuring a Reviewer.
@@ -51,11 +56,21 @@ func WithHash(mb int) Option {
 	}
 }
 
+// WithTopMoves sets the number of candidate moves (principal variations) the
+// engine evaluates for each position. The result is available as
+// MoveReview.TopMoves, ordered from best to worst. The default is 3.
+func WithTopMoves(n int) Option {
+	return func(c *config) {
+		c.topMoves = n
+	}
+}
+
 func defaultConfig() config {
 	return config{
-		depth:   DefaultDepth,
-		threads: DefaultThreads,
-		hashMB:  DefaultHashMB,
+		depth:    DefaultDepth,
+		threads:  DefaultThreads,
+		hashMB:   DefaultHashMB,
+		topMoves: DefaultTopMoves,
 	}
 }
 
@@ -72,6 +87,10 @@ func (c *config) validate() error {
 
 	if c.hashMB < 1 {
 		return fmt.Errorf("invalid hash size %d MB: must be >= 1", c.hashMB)
+	}
+
+	if c.topMoves < 1 {
+		return fmt.Errorf("invalid top moves %d: must be >= 1", c.topMoves)
 	}
 
 	return nil
