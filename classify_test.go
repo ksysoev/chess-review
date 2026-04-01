@@ -179,15 +179,8 @@ func TestClassify(t *testing.T) {
 			sacrificedPieceType: chess.Bishop,
 			expected:            Brilliant,
 		},
-		// Sacrifice with large loss, not best → Mistake (with Lichess coeff,
-		// winProb(50)≈0.519, winProb(-60)≈0.445, loss≈7.4% → was Inaccuracy with
-		// old coeff, but with Lichess coeff winProb(50)≈0.519, winProb(-60)≈0.445,
-		// loss≈7.4% is Inaccuracy; however the actual values with the Lichess coeff
-		// are winProb(50)≈0.519 and winProb(-60)≈0.445, loss≈0.074 → Inaccuracy).
-		// Wait — let me recalculate: winProb(50) = 1/(1+exp(-0.00368208*50)) =
-		// 1/(1+exp(-0.18410)) = 1/(1+0.8318) = 0.5459.
-		// winProb(-60) = 1/(1+exp(0.00368208*60)) = 1/(1+exp(0.22093)) =
-		// 1/(1+1.2472) = 0.4450. Loss = 0.5459 - 0.4450 = 0.1009 → ~10.1% → Mistake.
+		// Sacrifice with large loss, not best → Mistake. Using the Lichess coefficient:
+		// winProb(50) ≈ 0.546, winProb(-60) ≈ 0.445, loss ≈ 0.101 (~10.1%) → Mistake.
 		{
 			name:        "sacrifice with large win-prob loss falls through to Mistake (not Brilliant)",
 			scoreBefore: 50, scoreAfter: -60,

@@ -153,12 +153,21 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 			continue
 		}
 
+		// Exclude mate-sentinel-based moves from accuracy so a single
+		// missed-mate doesn't collapse accuracy to near zero.
+		cpLossVal := r.ScoreBefore - r.ScoreAfter
+		if cpLossVal >= missThreshold {
+			continue
+		}
+
 		// Compute win percentages from the played side's perspective.
 		wpBefore := winPercent(r.ScoreBefore)
 		wpAfter := winPercent(r.ScoreAfter)
 
 		// Build the all-positions win% list from White's perspective for
-		// the sliding-window volatility calculation.
+		// the sliding-window volatility calculation. Only moves that
+		// contribute an accuracy entry also contribute win-percent entries,
+		// keeping the two slices aligned for gameAccuracy().
 		var whiteWPBefore, whiteWPAfter float64
 		if r.Color == colorWhite {
 			whiteWPBefore = wpBefore
@@ -169,13 +178,6 @@ func Summarize(reviews []MoveReview, whiteName, blackName, openingCode, openingT
 		}
 
 		acc.whiteWinPercents = append(acc.whiteWinPercents, whiteWPBefore, whiteWPAfter)
-
-		// Exclude mate-sentinel-based moves from per-move accuracy so a single
-		// missed-mate doesn't collapse accuracy to near zero.
-		cpLossVal := r.ScoreBefore - r.ScoreAfter
-		if cpLossVal >= missThreshold {
-			continue
-		}
 
 		ma := moveAccuracy(wpBefore, wpAfter)
 
