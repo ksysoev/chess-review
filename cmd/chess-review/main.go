@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	chessreview "github.com/ksysoev/chess-review"
@@ -33,6 +34,10 @@ const (
 	flagHashDefault = chessreview.DefaultHashMB
 	flagHashUsage   = "Stockfish transposition table size in MB (default 16)"
 
+	flagTopMoves        = "top-moves"
+	flagTopMovesDefault = chessreview.DefaultTopMoves
+	flagTopMovesUsage   = "Number of candidate moves to evaluate per position (default 3)"
+
 	// Column widths for the fixed-format streaming move table.
 	colMove           = 4
 	colColor          = 5
@@ -43,6 +48,7 @@ const (
 	colScoreBefore    = 12
 	colScoreAfter     = 11
 	colDelta          = 7
+	colTopMoves       = 32
 )
 
 func main() {
@@ -69,6 +75,7 @@ Example:
   chess-review game.pgn
   chess-review --depth 20 game.pgn
   chess-review --depth 20 --threads 4 --hash 128 game.pgn
+  chess-review --top-moves 5 game.pgn
   STOCKFISH_PATH=/usr/local/bin/stockfish chess-review game.pgn`,
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
@@ -78,6 +85,7 @@ Example:
 	cmd.Flags().Int(flagDepth, flagDepthDefault, flagDepthUsage)
 	cmd.Flags().Int(flagThreads, flagThreadsDefault, flagThreadsUsage)
 	cmd.Flags().Int(flagHash, flagHashDefault, flagHashUsage)
+	cmd.Flags().Int(flagTopMoves, flagTopMovesDefault, flagTopMovesUsage)
 
 	return cmd
 }
@@ -102,6 +110,11 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("reading flag --%s: %w", flagHash, err)
 	}
 
+	topMoves, err := cmd.Flags().GetInt(flagTopMoves)
+	if err != nil {
+		return fmt.Errorf("reading flag --%s: %w", flagTopMoves, err)
+	}
+
 	stockfishPath := os.Getenv(envStockfishPath)
 	if stockfishPath == "" {
 		stockfishPath = defaultStockfishPath
@@ -115,7 +128,7 @@ func run(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	reviewer, err := chessreview.New(stockfishPath, chessreview.WithDepth(depth), chessreview.WithThreads(threads), chessreview.WithHash(hash))
+	reviewer, err := chessreview.New(stockfishPath, chessreview.WithDepth(depth), chessreview.WithThreads(threads), chessreview.WithHash(hash), chessreview.WithTopMoves(topMoves))
 	if err != nil {
 		return fmt.Errorf("starting engine: %w", err)
 	}
@@ -165,6 +178,36 @@ func formatMateIn(mateIn *int) string {
 	return fmt.Sprintf("-M%d", -*mateIn)
 }
 
+// formatTopMoves formats a slice of MoveEvaluation as a compact string for
+// display in the CLI table, e.g. "e2e4(+50) d2d4(+20) g1f3(-5)".
+// Each entry shows the UCI move followed by its signed centipawn score in
+// parentheses. Mate scores are shown as "M<N>" or "-M<N>".
+func formatTopMoves(moves []chessreview.MoveEvaluation) string {
+	if len(moves) == 0 {
+		return "-"
+	}
+
+	parts := make([]string, 0, len(moves))
+
+	for _, m := range moves {
+		var scoreStr string
+
+		if m.MateIn != nil {
+			if *m.MateIn >= 0 {
+				scoreStr = fmt.Sprintf("M%d", *m.MateIn)
+			} else {
+				scoreStr = fmt.Sprintf("-M%d", -*m.MateIn)
+			}
+		} else {
+			scoreStr = fmt.Sprintf("%+d", m.Score)
+		}
+
+		parts = append(parts, fmt.Sprintf("%s(%s)", m.Move, scoreStr))
+	}
+
+	return strings.Join(parts, " ")
+}
+
 // printTableHeader writes the fixed-width column headers for the move table.
 func printTableHeader() {
 	fmt.Fprintf(os.Stdout,
@@ -172,43 +215,43 @@ func printTableHeader() {
 		colMove, "Move",
 		colColor, "Color",
 		colMoveUCI, "Played",
-		colMoveUCI, "Best",
 		colClassification, "Classification",
 		colMateBefore, "Mate Before",
 		colMateAfter, "Mate After",
 		colScoreBefore, "Score Before",
 		colScoreAfter, "Score After",
 		colDelta, "Delta",
+		colTopMoves, "Top Moves",
 	)
 	fmt.Fprintf(os.Stdout,
 		"%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
 		colMove, "----",
 		colColor, "-----",
 		colMoveUCI, "------",
-		colMoveUCI, "----",
 		colClassification, "--------------",
 		colMateBefore, "-----------",
 		colMateAfter, "----------",
 		colScoreBefore, "------------",
 		colScoreAfter, "-----------",
 		colDelta, "-------",
+		colTopMoves, "--------------------------------",
 	)
 }
 
 // printTableRow writes a single move review as a fixed-width row to stdout.
 func printTableRow(r *chessreview.MoveReview) {
 	fmt.Fprintf(os.Stdout,
-		"%-*d  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*d  %-*d  %+*d\n",
+		"%-*d  %-*s  %-*s  %-*s  %-*s  %-*s  %-*d  %-*d  %+*d  %-*s\n",
 		colMove, r.MoveNumber,
 		colColor, r.Color,
 		colMoveUCI, r.PlayedMove,
-		colMoveUCI, r.BestMove,
 		colClassification, r.Classification,
 		colMateBefore, formatMateIn(r.MateInBefore),
 		colMateAfter, formatMateIn(r.MateInAfter),
 		colScoreBefore, r.ScoreBefore,
 		colScoreAfter, r.ScoreAfter,
 		colDelta, r.ScoreDelta,
+		colTopMoves, formatTopMoves(r.TopMoves),
 	)
 }
 
