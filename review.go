@@ -17,6 +17,12 @@ type chessEngine interface {
 	Close() error
 }
 
+// Color constants used in MoveReview.Color and throughout the codebase.
+const (
+	colorWhite = "white"
+	colorBlack = "black"
+)
+
 // MoveReview holds the analysis result for a single half-move (ply).
 type MoveReview struct {
 	// MateInBefore is non-nil when the position before this move has a forced-mate

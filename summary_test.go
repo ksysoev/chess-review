@@ -36,69 +36,158 @@ func TestPhaseOf(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// cpLoss
+// moveAccuracy
 // -----------------------------------------------------------------------
 
-func TestCpLoss(t *testing.T) {
+func TestMoveAccuracy(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		scoreDelta int
-		want       int
+		name     string
+		wpBefore float64
+		wpAfter  float64
+		wantMin  float64
+		wantMax  float64
 	}{
-		{name: "positive delta (improvement) returns 0", scoreDelta: 50, want: 0},
-		{name: "zero delta returns 0", scoreDelta: 0, want: 0},
-		{name: "small loss", scoreDelta: -30, want: 30},
-		{name: "large loss below sentinel", scoreDelta: -(missThreshold - 1), want: missThreshold - 1},
-		{name: "loss at sentinel excluded", scoreDelta: -missThreshold, want: -1},
-		{name: "loss above sentinel excluded", scoreDelta: -(missThreshold + 100), want: -1},
+		{
+			name:     "position improved → 100",
+			wpBefore: 50.0, wpAfter: 60.0,
+			wantMin: 100.0, wantMax: 100.0,
+		},
+		{
+			name:     "position unchanged → 100",
+			wpBefore: 50.0, wpAfter: 50.0,
+			wantMin: 100.0, wantMax: 100.0,
+		},
+		{
+			name: "small loss (~5 wp diff) → high accuracy",
+			// winPercent(0) = 50, winPercent(-30) ≈ 47.24; diff ≈ 2.76.
+			wpBefore: 50.0, wpAfter: 47.24,
+			wantMin: 85.0, wantMax: 100.0,
+		},
+		{
+			name: "moderate loss (~11 wp diff) → mid accuracy",
+			// winPercent(0) = 50, winPercent(-60) ≈ 44.50; diff ≈ 5.5.
+			wpBefore: 50.0, wpAfter: 44.5,
+			wantMin: 70.0, wantMax: 85.0,
+		},
+		{
+			name: "large loss (~25 wp diff) → low accuracy",
+			// winPercent(0) = 50, winPercent(-300) ≈ 24.9; diff ≈ 25.1.
+			wpBefore: 50.0, wpAfter: 24.9,
+			wantMin: 25.0, wantMax: 45.0,
+		},
+		{
+			name:     "massive loss near 100 wp diff → near zero",
+			wpBefore: 97.0, wpAfter: 3.0,
+			wantMin: 0.0, wantMax: 5.0,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, cpLoss(tt.scoreDelta))
-		})
-	}
-}
 
-// -----------------------------------------------------------------------
-// calcAccuracy
-// -----------------------------------------------------------------------
-
-func TestCalcAccuracy(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		avgCPL  float64
-		wantMin float64
-		wantMax float64
-	}{
-		{name: "perfect play (0 cpl) near 100", avgCPL: 0, wantMin: 99.0, wantMax: 100.0},
-		{name: "very high loss clamped to 0", avgCPL: 1000, wantMin: 0, wantMax: 0},
-		{name: "moderate loss mid-range", avgCPL: 50, wantMin: 5, wantMax: 50},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			got := calcAccuracy(tt.avgCPL)
+			got := moveAccuracy(tt.wpBefore, tt.wpAfter)
 			assert.GreaterOrEqual(t, got, tt.wantMin)
 			assert.LessOrEqual(t, got, tt.wantMax)
 		})
 	}
 }
 
-func TestCalcAccuracy_NeverExceedsBounds(t *testing.T) {
+func TestMoveAccuracy_NeverExceedsBounds(t *testing.T) {
 	t.Parallel()
 
-	for cpl := 0.0; cpl <= 500; cpl += 5 {
-		got := calcAccuracy(cpl)
-		assert.GreaterOrEqual(t, got, 0.0, "accuracy below 0 at avgCPL=%.0f", cpl)
-		assert.LessOrEqual(t, got, 100.0, "accuracy above 100 at avgCPL=%.0f", cpl)
+	for diff := 0.0; diff <= 100; diff += 1 {
+		got := moveAccuracy(50+diff/2, 50-diff/2)
+		assert.GreaterOrEqual(t, got, 0.0, "accuracy below 0 at diff=%.0f", diff)
+		assert.LessOrEqual(t, got, 100.0, "accuracy above 100 at diff=%.0f", diff)
+	}
+}
+
+// -----------------------------------------------------------------------
+// standardDeviation
+// -----------------------------------------------------------------------
+
+func TestStandardDeviation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		values []float64
+		want   float64
+		delta  float64
+	}{
+		{name: "empty returns 0", values: nil, want: 0, delta: 0},
+		{name: "single value returns 0", values: []float64{5}, want: 0, delta: 0},
+		{name: "identical values returns 0", values: []float64{3, 3, 3}, want: 0, delta: 1e-9},
+		// Population stddev of [2, 4, 4, 4, 5, 5, 7, 9] = 2.0.
+		{name: "known dataset", values: []float64{2, 4, 4, 4, 5, 5, 7, 9}, want: 2.0, delta: 0.01},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.InDelta(t, tt.want, standardDeviation(tt.values), tt.delta)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------
+// weightedMean
+// -----------------------------------------------------------------------
+
+func TestWeightedMean(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		values  []float64
+		weights []float64
+		want    float64
+		delta   float64
+	}{
+		{name: "empty returns 0", values: nil, weights: nil, want: 0, delta: 0},
+		{name: "equal weights → arithmetic mean", values: []float64{10, 20, 30}, weights: []float64{1, 1, 1}, want: 20, delta: 1e-9},
+		{name: "weighted towards first", values: []float64{10, 20}, weights: []float64{3, 1}, want: 12.5, delta: 1e-9},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.InDelta(t, tt.want, weightedMean(tt.values, tt.weights), tt.delta)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------
+// harmonicMean
+// -----------------------------------------------------------------------
+
+func TestHarmonicMean(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		values []float64
+		want   float64
+		delta  float64
+	}{
+		{name: "empty returns 0", values: nil, want: 0, delta: 0},
+		{name: "single value", values: []float64{5}, want: 5, delta: 1e-9},
+		// Harmonic mean of [1, 4] = 2/(1/1 + 1/4) = 2/1.25 = 1.6.
+		{name: "two values", values: []float64{1, 4}, want: 1.6, delta: 1e-9},
+		// Harmonic mean of [100, 100, 100] = 100.
+		{name: "identical values", values: []float64{100, 100, 100}, want: 100, delta: 1e-9},
+		// Zero values use epsilon=0.01 → heavily penalised.
+		{name: "zero value handled with epsilon", values: []float64{0, 100}, want: 0, delta: 1.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.InDelta(t, tt.want, harmonicMean(tt.values), tt.delta)
+		})
 	}
 }
 
@@ -116,9 +205,17 @@ func TestCalcGameRating(t *testing.T) {
 		wantMax  int
 	}{
 		{name: "NaN returns min", accuracy: math.NaN(), wantMin: gameRatingMin, wantMax: gameRatingMin},
-		{name: "0% accuracy returns min", accuracy: 0, wantMin: gameRatingMin, wantMax: gameRatingMin},
-		{name: "100% accuracy returns expected rating", accuracy: 100, wantMin: 2700, wantMax: 2700},
-		{name: "50% accuracy mid-range", accuracy: 50, wantMin: gameRatingMin, wantMax: gameRatingMax},
+		{name: "very low accuracy returns min", accuracy: 1, wantMin: gameRatingMin, wantMax: gameRatingMin},
+		// Logistic: 50% → 850.
+		{name: "50% accuracy → ~850", accuracy: 50, wantMin: 840, wantMax: 860},
+		// Logistic: 80% → ~1700.
+		{name: "80% accuracy → ~1700", accuracy: 80, wantMin: 1680, wantMax: 1720},
+		// Logistic: 90% → ~2200.
+		{name: "90% accuracy → ~2200", accuracy: 90, wantMin: 2180, wantMax: 2220},
+		// Logistic: 95% → ~2660.
+		{name: "95% accuracy → ~2660", accuracy: 95, wantMin: 2640, wantMax: 2680},
+		// Very high accuracy capped at gameRatingMax.
+		{name: "99.5% accuracy capped at max", accuracy: 99.5, wantMin: 2900, wantMax: gameRatingMax},
 	}
 
 	for _, tt := range tests {
@@ -140,8 +237,8 @@ func TestSummarize_PlayerNames(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "black", MoveNumber: 1, Classification: Good, ScoreDelta: -15},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "black", MoveNumber: 1, Classification: Good, ScoreBefore: 15, ScoreAfter: 0, ScoreDelta: -15},
 	}
 
 	summary := Summarize(reviews, "Alice", "Bob", "", "")
@@ -154,11 +251,11 @@ func TestSummarize_ClassificationCounts(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 2, Classification: Brilliant, ScoreDelta: -5},
-		{Color: "white", MoveNumber: 3, Classification: Inaccuracy, ScoreDelta: -50},
-		{Color: "black", MoveNumber: 1, Classification: Blunder, ScoreDelta: -400},
-		{Color: "black", MoveNumber: 2, Classification: Blunder, ScoreDelta: -350},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 2, Classification: Brilliant, ScoreBefore: 50, ScoreAfter: 55, ScoreDelta: 5},
+		{Color: "white", MoveNumber: 3, Classification: Inaccuracy, ScoreBefore: 50, ScoreAfter: -10, ScoreDelta: -60},
+		{Color: "black", MoveNumber: 1, Classification: Blunder, ScoreBefore: 50, ScoreAfter: -350, ScoreDelta: -400},
+		{Color: "black", MoveNumber: 2, Classification: Blunder, ScoreBefore: 50, ScoreAfter: -300, ScoreDelta: -350},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -177,9 +274,9 @@ func TestSummarize_AccuracyPerfectPlay(t *testing.T) {
 
 	// All best moves with zero delta → accuracy should be near 100.
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 2, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 3, Classification: Best, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 2, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 3, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -192,8 +289,8 @@ func TestSummarize_AccuracyBadPlay(t *testing.T) {
 
 	// All blunders → low accuracy.
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Blunder, ScoreDelta: -350},
-		{Color: "white", MoveNumber: 2, Classification: Blunder, ScoreDelta: -400},
+		{Color: "white", MoveNumber: 1, Classification: Blunder, ScoreBefore: 50, ScoreAfter: -300, ScoreDelta: -350},
+		{Color: "white", MoveNumber: 2, Classification: Blunder, ScoreBefore: 50, ScoreAfter: -350, ScoreDelta: -400},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -205,17 +302,17 @@ func TestSummarize_PhaseAccuracy(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		// Opening moves (1–10)
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 5, Classification: Best, ScoreDelta: 0},
-		// Middlegame moves (11–25)
-		{Color: "white", MoveNumber: 15, Classification: Inaccuracy, ScoreDelta: -60},
-		// No endgame moves for white
+		// Opening moves (1–10): perfect play.
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 5, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		// Middlegame moves (11–25): some loss.
+		{Color: "white", MoveNumber: 15, Classification: Inaccuracy, ScoreBefore: 50, ScoreAfter: -10, ScoreDelta: -60},
+		// No endgame moves for white.
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
 
-	// Opening accuracy should be near 100 (zero CPL).
+	// Opening accuracy should be near 100 (zero loss).
 	assert.InDelta(t, 100.0, summary.White.PhaseAccuracy[Opening], 1.0)
 
 	// Middlegame accuracy should be lower.
@@ -225,15 +322,15 @@ func TestSummarize_PhaseAccuracy(t *testing.T) {
 	assert.True(t, math.IsNaN(summary.White.PhaseAccuracy[Endgame]))
 }
 
-func TestSummarize_SentinelExcludedFromCPL(t *testing.T) {
+func TestSummarize_SentinelExcludedFromAccuracy(t *testing.T) {
 	t.Parallel()
 
-	// A Miss move has a sentinel-sized delta and should be excluded from CPL.
+	// A Miss move has a sentinel-sized delta and should be excluded from accuracy.
 	// Without exclusion it would massively reduce accuracy.
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 2, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 3, Classification: Miss, ScoreDelta: -missThreshold},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 2, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 3, Classification: Miss, ScoreBefore: mateScoreSentinel, ScoreAfter: 0, ScoreDelta: -missThreshold},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -257,8 +354,8 @@ func TestSummarize_GameRatingInRange(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
-		{Color: "black", MoveNumber: 1, Classification: Blunder, ScoreDelta: -400},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "black", MoveNumber: 1, Classification: Blunder, ScoreBefore: 50, ScoreAfter: -350, ScoreDelta: -400},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -269,16 +366,16 @@ func TestSummarize_GameRatingInRange(t *testing.T) {
 	assert.LessOrEqual(t, summary.Black.GameRating, gameRatingMax)
 }
 
-func TestSummarize_BookMovesExcludedFromCPL(t *testing.T) {
+func TestSummarize_BookMovesExcludedFromAccuracy(t *testing.T) {
 	t.Parallel()
 
-	// Book moves should not contribute to CPL / accuracy, regardless of their
+	// Book moves should not contribute to accuracy, regardless of their
 	// score delta. Without exclusion the blunder-sized delta on the Book move
 	// would collapse accuracy well below 90%.
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Book, ScoreDelta: -400},
-		{Color: "white", MoveNumber: 2, Classification: Best, ScoreDelta: 0},
-		{Color: "white", MoveNumber: 3, Classification: Best, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 1, Classification: Book, ScoreBefore: 50, ScoreAfter: -350, ScoreDelta: -400},
+		{Color: "white", MoveNumber: 2, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 3, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
@@ -293,7 +390,7 @@ func TestSummarize_OpeningFields(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Book, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 1, Classification: Book, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
 	}
 
 	summary := Summarize(reviews, "Alice", "Bob", "C50", "Italian Game")
@@ -306,11 +403,37 @@ func TestSummarize_OpeningFieldsEmpty(t *testing.T) {
 	t.Parallel()
 
 	reviews := []MoveReview{
-		{Color: "white", MoveNumber: 1, Classification: Best, ScoreDelta: 0},
+		{Color: "white", MoveNumber: 1, Classification: Best, ScoreBefore: 15, ScoreAfter: 15, ScoreDelta: 0},
 	}
 
 	summary := Summarize(reviews, "", "", "", "")
 
 	assert.Empty(t, summary.OpeningCode)
 	assert.Empty(t, summary.OpeningTitle)
+}
+
+// -----------------------------------------------------------------------
+// gameAccuracy (integration)
+// -----------------------------------------------------------------------
+
+func TestGameAccuracy_AllPerfect(t *testing.T) {
+	t.Parallel()
+
+	accs := []float64{100, 100, 100, 100, 100}
+	// Equal weights — all plies have the same volatility.
+	weights := []float64{0.5, 0.5, 0.5, 0.5, 0.5}
+
+	got := gameAccuracy(accs, weights)
+	assert.InDelta(t, 100.0, got, 0.1)
+}
+
+func TestGameAccuracy_SingleMove(t *testing.T) {
+	t.Parallel()
+
+	accs := []float64{75.0}
+	// Single-move case: weights are ignored (function returns accs[0] directly).
+	weights := []float64{0.5}
+
+	got := gameAccuracy(accs, weights)
+	assert.InDelta(t, 75.0, got, 0.1)
 }
