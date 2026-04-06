@@ -198,9 +198,25 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 
 		playedSoFar = append(playedSoFar, mv.UCIMove)
 
-		nextTopMoves, analyzeErr := r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
-		if analyzeErr != nil {
-			return nil, analyzeErr
+		// Terminal positions (checkmate or stalemate) cause Stockfish to respond
+		// with "bestmove (none)" and no evaluation lines. Skip the engine call
+		// and synthesise the result directly from the known game outcome.
+		var nextTopMoves []MoveEvaluation
+
+		if mv.IsTerminal {
+			mateVal := 0
+			score := -mateScoreSentinel // checkmate: the side that just moved is mated
+
+			if mv.IsStalemate {
+				score = 0 // stalemate is a draw
+			}
+
+			nextTopMoves = []MoveEvaluation{{MateIn: &mateVal, Score: score}}
+		} else {
+			nextTopMoves, analyzeErr = r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
+			if analyzeErr != nil {
+				return nil, analyzeErr
+			}
 		}
 
 		// Negate nextScore: after the move Stockfish evaluates from the opponent's
@@ -376,6 +392,16 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 	}
 
 	if maxPV == 0 {
+		// Safety net: Stockfish returns "bestmove (none)" with no evaluation
+		// lines for terminal positions (checkmate or stalemate). reviewFromGameInfo
+		// normally avoids calling analyzePosition for such positions, but if this
+		// function is called directly on a terminal position we return a synthetic
+		// mate-0 evaluation rather than an error.
+		if bestMove == "(none)" {
+			mateVal := 0
+			return []MoveEvaluation{{MateIn: &mateVal, Score: -mateScoreSentinel}}, nil
+		}
+
 		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
 	}
 

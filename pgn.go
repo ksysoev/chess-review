@@ -28,6 +28,15 @@ type moveInfo struct {
 	// Book moves are not judged by engine evaluation and are excluded from
 	// accuracy calculations.
 	IsBook bool
+	// IsTerminal is true when this is the last move of the game and the
+	// resulting position is checkmate or stalemate. When true, the engine
+	// will return bestmove (none) for the post-move position and no further
+	// analysis is meaningful.
+	IsTerminal bool
+	// IsStalemate is true when IsTerminal is true and the terminal condition
+	// is stalemate (a draw) rather than checkmate. When false and IsTerminal
+	// is true the game ended in checkmate.
+	IsStalemate bool
 }
 
 // gameInfo holds the parsed moves and the initial position FEN for the game.
@@ -117,6 +126,15 @@ func parsePGN(pgn string) (gameInfo, error) {
 			IsSacrifice:         isSacrifice,
 			SacrificedPieceType: sacrificedPieceType,
 		})
+	}
+
+	// Mark the last move as terminal when the final position is checkmate or
+	// stalemate. positions has len(moves)+1 entries; positions[len(moves)] is
+	// the position reached after the last move.
+	finalStatus := positions[len(moves)].Status()
+	if finalStatus == chess.Checkmate || finalStatus == chess.Stalemate {
+		infos[len(infos)-1].IsTerminal = true
+		infos[len(infos)-1].IsStalemate = finalStatus == chess.Stalemate
 	}
 
 	// Identify the opening by matching board positions against the Lichess
