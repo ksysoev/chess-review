@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/corentings/chess/v2"
 	"github.com/ksysoev/stockfish"
 )
 
@@ -204,14 +205,18 @@ func (r *Reviewer) reviewFromGameInfo(ctx context.Context, gi *gameInfo, sink ch
 		var nextTopMoves []MoveEvaluation
 
 		if mv.IsTerminal {
-			mateVal := 0
-			score := -mateScoreSentinel // checkmate: the side that just moved is mated
+			var mateIn *int
+
+			score := -mateScoreSentinel // checkmate: in the resulting position, the side to move is mated
 
 			if mv.IsStalemate {
-				score = 0 // stalemate is a draw
+				score = 0 // stalemate is a draw; mateIn stays nil (no mate sequence)
+			} else {
+				mateVal := 0
+				mateIn = &mateVal
 			}
 
-			nextTopMoves = []MoveEvaluation{{MateIn: &mateVal, Score: score}}
+			nextTopMoves = []MoveEvaluation{{MateIn: mateIn, Score: score}}
 		} else {
 			nextTopMoves, analyzeErr = r.analyzePosition(ctx, gi.InitialFEN, playedSoFar)
 			if analyzeErr != nil {
@@ -396,9 +401,14 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 		// lines for terminal positions (checkmate or stalemate). reviewFromGameInfo
 		// normally avoids calling analyzePosition for such positions, but if this
 		// function is called directly on a terminal position we return a synthetic
-		// mate-0 evaluation rather than an error.
+		// evaluation derived from the actual position status.
 		if bestMove == "(none)" {
+			if positionStatus(initialFEN, moves) == chess.Stalemate {
+				return []MoveEvaluation{{MateIn: nil, Score: 0}}, nil
+			}
+
 			mateVal := 0
+
 			return []MoveEvaluation{{MateIn: &mateVal, Score: -mateScoreSentinel}}, nil
 		}
 

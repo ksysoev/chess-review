@@ -233,6 +233,26 @@ func parseFENMoveContext(fen string) (startMoveNum, startBlack int) {
 	return moveNum, blackOffset
 }
 
+// positionStatus reconstructs the position reached by applying moves (in UCI
+// notation) to the position described by initialFEN and returns its Status.
+// Returns chess.NoMethod on any parse or move-application error.
+func positionStatus(initialFEN string, moves []string) chess.Method {
+	fenOpt, err := chess.FEN(initialFEN)
+	if err != nil {
+		return chess.NoMethod
+	}
+
+	game := chess.NewGame(fenOpt)
+
+	for _, uci := range moves {
+		if pushErr := game.PushNotationMove(uci, chess.UCINotation{}, nil); pushErr != nil {
+			return chess.NoMethod
+		}
+	}
+
+	return game.Position().Status()
+}
+
 // moveToUCI converts a *chess.Move to UCI long algebraic notation.
 // Promotion piece is appended as a lowercase letter when applicable.
 func moveToUCI(m *chess.Move) string {

@@ -1298,9 +1298,8 @@ func TestReviewer_ReviewGame_StalemateTerminal(t *testing.T) {
 	// ScoreAfter: synthesised as -(0) = 0 (draw) from the played side's frame.
 	assert.Equal(t, 0, rv.ScoreAfter)
 
-	// MateInAfter: synthesised mate-in-0, negated → 0.
-	require.NotNil(t, rv.MateInAfter)
-	assert.Equal(t, 0, *rv.MateInAfter)
+	// MateInAfter: stalemate is a draw, so it should not be represented as mate-in-0.
+	assert.Nil(t, rv.MateInAfter)
 }
 
 // TestAnalyzePosition_SafetyNet_BestMoveNone verifies the safety-net guard in
