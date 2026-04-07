@@ -1205,3 +1205,128 @@ func TestReviewer_ReviewGame_MultiPV(t *testing.T) {
 	assert.Equal(t, "c2c4", top[2].Move)
 	assert.Equal(t, 15, top[2].Score)
 }
+
+// TestReviewer_ReviewGame_CheckmateTerminal verifies that ReviewGame succeeds
+// when the final move delivers checkmate. Stockfish responds with
+// "bestmove (none)" for the resulting position; reviewFromGameInfo must
+// synthesise a terminal evaluation rather than calling analyzePosition and
+// returning ErrEngineFailure.
+func TestReviewer_ReviewGame_CheckmateTerminal(t *testing.T) {
+	t.Parallel()
+
+	// Ra8# — rook to a8 delivers checkmate.
+	// FEN: 5k2/R7/5K2/8/8/8/8/8 w - - 0 1
+	// After Ra8 (a7a8) the black king on f8 is checkmated.
+	const pgn = `[Event "Test"]
+[Result "1-0"]
+[SetUp "1"]
+[FEN "5k2/R7/5K2/8/8/8/8/8 w - - 0 1"]
+
+1. Ra8# 1-0`
+
+	// analyzePosition is called only once (N+1 = 1+1, but the terminal call is
+	// skipped). Total engine calls: 1 (initial position before Ra8).
+	//
+	// call 0 (initial, white to move): mate-in-1 available; best = a7a8.
+	//
+	// The post-move position is terminal (checkmate), so reviewFromGameInfo
+	// synthesises nextTopMoves without calling analyzePosition again.
+	batches := [][]stockfish.SearchInfo{
+		{makeMateInfo(1), makeBestMoveInfo("a7a8")},
+	}
+
+	r := &Reviewer{engine: &batchMockEngine{batches: batches}, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+
+	rv := reviews[0]
+
+	assert.Equal(t, "a7a8", rv.PlayedMove)
+	assert.Equal(t, "white", rv.Color)
+
+	// ScoreBefore: the engine reported mate-in-1 before the move.
+	assert.Equal(t, mateScoreSentinel, rv.ScoreBefore)
+	require.NotNil(t, rv.MateInBefore)
+	assert.Equal(t, 1, *rv.MateInBefore)
+
+	// ScoreAfter: synthesised as -(-mateScoreSentinel) = +mateScoreSentinel from
+	// white's (played side's) perspective — white delivered checkmate.
+	assert.Equal(t, mateScoreSentinel, rv.ScoreAfter)
+
+	// MateInAfter: synthesised mate-in-0, negated into played side's frame → 0.
+	require.NotNil(t, rv.MateInAfter)
+	assert.Equal(t, 0, *rv.MateInAfter)
+}
+
+// TestReviewer_ReviewGame_StalemateTerminal verifies that ReviewGame succeeds
+// when the final move produces stalemate. The synthesised post-move evaluation
+// must carry Score=0 (a draw), not -mateScoreSentinel.
+func TestReviewer_ReviewGame_StalemateTerminal(t *testing.T) {
+	t.Parallel()
+
+	// Qb6 stalemate: white queen moves from c7 to b6, leaving the black king on
+	// a8 with no legal moves and not in check.
+	// FEN: k7/2Q5/2K5/8/8/8/8/8 w - - 0 1
+	// After Qc7-b6 (c7b6) the black king on a8 is stalemated.
+	const pgn = `[Event "Test"]
+[Result "1/2-1/2"]
+[SetUp "1"]
+[FEN "k7/2Q5/2K5/8/8/8/8/8 w - - 0 1"]
+
+1. Qb6 1/2-1/2`
+
+	// call 0 (initial, white to move): cp score 500, best = c7b6.
+	batches := [][]stockfish.SearchInfo{
+		{makeDepthInfo(500), makeBestMoveInfo("c7b6")},
+	}
+
+	r := &Reviewer{engine: &batchMockEngine{batches: batches}, cfg: defaultConfig()}
+
+	reviews, err := r.ReviewGame(context.Background(), pgn)
+
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+
+	rv := reviews[0]
+
+	assert.Equal(t, "c7b6", rv.PlayedMove)
+	assert.Equal(t, "white", rv.Color)
+
+	// ScoreAfter: synthesised as -(0) = 0 (draw) from the played side's frame.
+	assert.Equal(t, 0, rv.ScoreAfter)
+
+	// MateInAfter: stalemate is a draw, so it should not be represented as mate-in-0.
+	assert.Nil(t, rv.MateInAfter)
+}
+
+// TestAnalyzePosition_SafetyNet_BestMoveNone verifies the safety-net guard in
+// analyzePosition: when the engine sends only a bestmove=(none) line (no info
+// lines), the function must return a synthetic mate-0 evaluation rather than
+// ErrEngineFailure. This covers direct calls to analyzePosition on terminal
+// positions that bypass the reviewFromGameInfo short-circuit.
+func TestAnalyzePosition_SafetyNet_BestMoveNone(t *testing.T) {
+	t.Parallel()
+
+	// Engine sends only the bestmove (none) line — no info lines at all.
+	batches := [][]stockfish.SearchInfo{
+		{makeBestMoveInfo("(none)")},
+	}
+
+	r := &Reviewer{engine: &batchMockEngine{batches: batches}, cfg: defaultConfig()}
+
+	initialFEN := "5k2/R7/5K2/8/8/8/8/8 w - - 0 1"
+	evals, err := r.analyzePosition(context.Background(), initialFEN, []string{"a7a8"})
+
+	require.NoError(t, err)
+	require.Len(t, evals, 1)
+
+	// Score must be -mateScoreSentinel (the side to move is already mated).
+	assert.Equal(t, -mateScoreSentinel, evals[0].Score)
+
+	// MateIn must be 0 (already mated).
+	require.NotNil(t, evals[0].MateIn)
+	assert.Equal(t, 0, *evals[0].MateIn)
+}
