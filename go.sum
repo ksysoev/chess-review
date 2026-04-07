@@ -8,6 +8,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/ksysoev/chess-openings v0.1.0 h1:ulNMwZcsSfMC/6b86XxcRNus6Yj1bD1bQ3bjfBOsTPw=
 github.com/ksysoev/chess-openings v0.1.0/go.mod h1:0bDVSPwePasFgTQeEASrsRYqOYTliohVU3FI+tXv9yU=
+github.com/ksysoev/chess-openings v0.1.1 h1:COr/Dv2vQ1muoKrI6LwXw+i/4JclPsrC5N/x8E/ERvs=
+github.com/ksysoev/chess-openings v0.1.1/go.mod h1:0bDVSPwePasFgTQeEASrsRYqOYTliohVU3FI+tXv9yU=
 github.com/ksysoev/stockfish v0.1.0 h1:h2nLVqgUVjeUxAiVKPeqjYTmLtuYuqmIrnii3PYuavI=
 github.com/ksysoev/stockfish v0.1.0/go.mod h1:85jzEYFlzozMuaA15k34QMzCaFm1fWetdEErxOZfmJU=
 github.com/notnil/chess v1.10.0 h1:RR3MgS9G6zZmJ+VPTJolyxdaIgxoUPyUUY+2iaw35G0=

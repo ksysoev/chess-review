@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/corentings/chess/v2 v2.3.8
-	github.com/ksysoev/chess-openings v0.1.0
+	github.com/ksysoev/chess-openings v0.1.1
 	github.com/ksysoev/stockfish v0.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
