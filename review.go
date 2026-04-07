@@ -403,13 +403,16 @@ func (r *Reviewer) analyzePosition(ctx context.Context, initialFEN string, moves
 		// function is called directly on a terminal position we return a synthetic
 		// evaluation derived from the actual position status.
 		if bestMove == "(none)" {
-			if positionStatus(initialFEN, moves) == chess.Stalemate {
+			switch positionStatus(initialFEN, moves) {
+			case chess.Stalemate:
 				return []MoveEvaluation{{MateIn: nil, Score: 0}}, nil
+			case chess.Checkmate:
+				mateVal := 0
+
+				return []MoveEvaluation{{MateIn: &mateVal, Score: -mateScoreSentinel}}, nil
+			default:
+				return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
 			}
-
-			mateVal := 0
-
-			return []MoveEvaluation{{MateIn: &mateVal, Score: -mateScoreSentinel}}, nil
 		}
 
 		return nil, &ErrEngineFailure{Reason: "engine returned no evaluations"}
